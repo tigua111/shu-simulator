@@ -1,570 +1,270 @@
-import type { Audio } from '../engine/audio'
-import type { I18n } from '../engine/i18n'
-import type { Input } from '../engine/input'
-import { insertScore, type Locale, type Quality, type SaveData, type SaveStore } from '../engine/save'
-import { CONFIG } from '../game/config'
-import type { Compass, Hint } from '../game/game'
-import { formatClock, stars, type RunState } from '../game/rules'
+import { LANDMARKS, type Landmark } from '../campus/data'
+import type { Mode } from '../campus/explorer'
 
-export type Screen = 'boot' | 'title' | 'hud' | 'pause' | 'settings' | 'leaderboard' | 'results'
+export const LOGO_SVG = `<svg viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" fill="#a3122b"/><path d="M8 40V16h32v24H30V27a6 6 0 0 0-12 0v13Z" fill="#e7b9a6"/><rect x="6" y="11" width="36" height="5" fill="#fbf6ee"/></svg>`
 
-export type UiActions = {
-  play(): void
-  resume(): void
-  restart(): void
-  quit(): void
-  settings(patch: Partial<SaveData>): void
+export interface UiActions {
+  start: (mode: Mode) => void
+  mode: (mode: Mode) => void
+  landmark: (l: Landmark) => void
+  tourToggle: () => void
+  tourRestart: () => void
+  reset: () => void
+  touchMove: (x: number, y: number) => void
+  touchLook: (dx: number, dy: number) => void
 }
 
-const ICON = {
-  core: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1 21 12 12 23 3 12Z" fill="currentColor"/><path d="M12 1 21 12H3Z" fill="#fff" opacity=".35"/></svg>',
-  cell: '<svg viewBox="0 0 20 30" aria-hidden="true"><rect x="6" y="0" width="8" height="4" rx="1.5" fill="currentColor"/><rect x="1.5" y="4" width="17" height="25" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><rect class="fill" x="5" y="8" width="10" height="17" rx="2" fill="currentColor"/></svg>',
-  star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3 6.6 7.2.8-5.4 4.9 1.5 7.1L12 17.8 5.7 21.4l1.5-7.1L1.8 9.4 9 8.6Z" fill="currentColor"/></svg>',
-  arrow: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 20 20 12 15 4 20Z" fill="currentColor"/></svg>',
-  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="5" height="16" rx="1.5" fill="currentColor"/><rect x="14" y="4" width="5" height="16" rx="1.5" fill="currentColor"/></svg>',
-}
+const SOURCES = [
+  { title: '世新大學官方「校園導覽地圖」（建築編號 01–21 與相對位置）', url: 'https://www.shu.edu.tw/SHU-Location.aspx' },
+  { title: '世新大學「傳播大廈（C）」樓層資訊（新聞傳播學院、各系辦）', url: 'https://www.shu.edu.tw/SHU-Building-C.aspx' },
+  { title: '世新大學新聞稿：校門與世界大廈外觀照片（粉色石造拱門）', url: 'https://www.shu.edu.tw/' },
+  { title: '新聞人電子報：操場跑道、大禮堂與步道照片', url: 'https://www.newspeople.com.tw/' },
+  { title: '中央社訊息平台：舍我樓、校園廣場與設施照片', url: 'https://www.cna.com.tw/postwrite/chi/381537' },
+]
 
-/** Glyphs for control hints, per input method. */
-const GLYPH = {
-  keyboard: { keys: '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', jump: '<kbd class="wide">Space</kbd>', dash: '<kbd>F</kbd>', select: '<kbd>Enter</kbd>', back: '<kbd>Esc</kbd>' },
-  gamepad: { keys: '<kbd class="round">L</kbd>', stickR: '<kbd class="round">R</kbd>', jump: '<kbd class="round a">A</kbd>', dash: '<kbd class="round x">X</kbd>', select: '<kbd class="round a">A</kbd>', back: '<kbd class="round b">B</kbd>' },
-}
-
-/**
- * DOM game UI: title, HUD, pause, settings, results and leaderboard as HTML/CSS layered over the
- * canvas. Every screen is keyboard-, gamepad- and touch-navigable; text comes from i18n keys and
- * re-renders on language change.
- */
 export class Ui {
-  screen: Screen = 'boot'
-  private readonly root: HTMLElement
-  private readonly stack: Screen[] = []
-  private hudCache = new Map<string, string>()
-  private hintKey: Hint | null = null
-  private navRepeat = 0
-  private lastRun?: RunState
-  private savedRank = -1
-  private stormShown = false
-  private lastMethod = ''
+  readonly root: HTMLElement
+  private readonly caption: HTMLElement
+  private readonly where: HTMLElement
+  private readonly toastEl: HTMLElement
+  private readonly tourBar: HTMLElement
+  private readonly tourFill: HTMLElement
+  private readonly tourBtn: HTMLButtonElement
+  private readonly hint: HTMLElement
+  private toastTimer = 0
+  readonly minimapCanvas: HTMLCanvasElement
 
-  constructor(
-    private readonly i18n: I18n,
-    private readonly save: SaveStore,
-    private readonly audio: Audio,
-    private readonly input: Input,
-    private readonly actions: UiActions,
-  ) {
-    this.root = document.getElementById('ui')!
-    this.root.innerHTML = this.template()
-    this.root.addEventListener('click', e => this.onClick(e))
-    this.root.addEventListener('input', e => this.onInput(e))
-    this.root.addEventListener('focusin', e => {
-      if ((e.target as HTMLElement).matches('.btn, .seg button, .toggle')) this.audio.play('ui')
+  constructor(root: HTMLElement, private readonly actions: UiActions) {
+    this.root = root
+    const route = LANDMARKS.filter(l => l.onRoute)
+    const others = LANDMARKS.filter(l => !l.onRoute)
+    const item = (l: Landmark) => `<li><button type="button" data-lm="${l.num}" class="${l.num === '19' ? 'is-goal' : ''}"><b>${l.num}</b><span>${l.name}</span></button></li>`
+    root.innerHTML = `
+      <section class="start is-open" data-screen="start">
+        <div class="start-card">
+          <div class="start-logo">${LOGO_SVG}</div>
+          <p class="eyebrow">SHIH HSIN UNIVERSITY · 3D CAMPUS WALK</p>
+          <h1>世新大學・漫遊校園</h1>
+          <p class="lede">從木柵路上的粉色石造拱門出發，穿過山洞隧道、言論廣場與舍我樓，經過大禮堂與操場，一路走到新聞傳播學院所在的<strong>傳播大廈 C 棟</strong>。</p>
+          <p class="disclaimer">概念模型｜非精密測繪或正式路線指引</p>
+          <div class="start-actions">
+            <button type="button" class="btn primary" data-start="walk">從前校門開始步行</button>
+            <button type="button" class="btn" data-start="tour">自動導覽</button>
+            <button type="button" class="btn" data-start="overview">俯瞰全校</button>
+          </div>
+          <p class="keys-hint"><kbd>W A S D</kbd> 或方向鍵移動・拖曳或點擊畫面後移動滑鼠環顧・<kbd>Shift</kbd> 快走・手機用左下搖桿與右側拖曳</p>
+        </div>
+      </section>
+      <header class="brand">
+        <span class="brand-logo">${LOGO_SVG}</span>
+        <div><strong>世新大學・漫遊校園</strong><em>概念模型｜非精密測繪或正式路線指引</em></div>
+      </header>
+      <nav class="modes" aria-label="模式">
+        <button type="button" data-mode="walk" class="is-active">步行</button>
+        <button type="button" data-mode="overview">俯瞰</button>
+        <button type="button" data-mode="tour">自動導覽</button>
+        <span class="sep"></span>
+        <button type="button" data-open="help">說明</button>
+        <button type="button" data-open="sources">來源</button>
+      </nav>
+      <button type="button" class="index-toggle" data-toggle-index>地標</button>
+      <aside class="index" aria-label="地標索引">
+        <h2>主動線<small>前校門 → 傳播 C</small></h2>
+        <ol>${route.map(item).join('')}</ol>
+        <h2>其他建築</h2>
+        <ol>${others.map(item).join('')}</ol>
+        <button type="button" class="btn small" data-reset>回到前校門</button>
+      </aside>
+      <div class="where" aria-live="polite"></div>
+      <div class="caption" aria-live="polite"></div>
+      <div class="tourbar">
+        <button type="button" class="btn small" data-tour-toggle>暫停</button>
+        <div class="tour-track"><i></i></div>
+        <button type="button" class="btn small" data-tour-restart>從頭</button>
+      </div>
+      <div class="minimap-wrap"><canvas class="minimap" aria-label="小地圖，點擊可移動到該處"></canvas><span>小地圖・點擊可移動</span></div>
+      <div class="crosshair"></div>
+      <div class="hint"></div>
+      <div class="touch"><div class="touch-stick"><i></i></div></div>
+      <div class="toast" role="status"></div>
+      <section class="modal" data-modal="help" role="dialog" aria-label="操作說明">
+        <div class="modal-card">
+          <h2>操作說明</h2>
+          <table>
+            <tr><th>移動</th><td><kbd>W A S D</kbd> 或方向鍵；按住 <kbd>Shift</kbd> 快走</td></tr>
+            <tr><th>環顧</th><td>點擊畫面鎖定滑鼠後移動，或按住滑鼠拖曳；<kbd>Esc</kbd> 釋放滑鼠</td></tr>
+            <tr><th>手機</th><td>左下拖曳搖桿移動（推到底快走），右側拖曳畫面環顧</td></tr>
+            <tr><th>模式</th><td><kbd>1</kbd> 步行・<kbd>2</kbd> 俯瞰・<kbd>3</kbd> 自動導覽・<kbd>R</kbd> 回到前校門</td></tr>
+            <tr><th>俯瞰</th><td>拖曳旋轉、右鍵或雙指平移、滾輪或雙指縮放</td></tr>
+            <tr><th>跳轉</th><td>點選左側地標索引，或點擊右下小地圖上的位置</td></tr>
+          </table>
+          <p class="note">地面上的<span class="swatch route"></span>紅磚色步道與白色箭頭是主動線，粉紅光柱是終點傳播大廈 C 棟入口。</p>
+          <button type="button" class="btn primary" data-close>知道了</button>
+        </div>
+      </section>
+      <section class="modal" data-modal="sources" role="dialog" aria-label="參考來源與範圍">
+        <div class="modal-card">
+          <h2>參考來源與作品範圍</h2>
+          <p>本作是依公開資料製作的<strong>概念模型</strong>：建築位置依官方校園導覽圖的相對關係推估，量體、樓高與坡度皆為示意，<strong>非精密測繪，也不是正式路線指引</strong>。</p>
+          <p>範圍：前校門（01）經隧道、言論廣場（06）、舍我樓（12・13）、學校廣場（14）、大禮堂（17）與操場（18），到新聞傳播學院所在的傳播大廈 C 棟（19）；周邊建築以簡化量體呈現。</p>
+          <ul>${SOURCES.map(s => `<li><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a></li>`).join('')}</ul>
+          <p class="note">照片僅作為造型與配色參考，場景中沒有使用任何照片貼圖；所有建築、材質與招牌皆以程式化幾何繪製。</p>
+          <button type="button" class="btn primary" data-close>關閉</button>
+        </div>
+      </section>`
+    this.caption = root.querySelector('.caption')!
+    this.where = root.querySelector('.where')!
+    this.toastEl = root.querySelector('.toast')!
+    this.tourBar = root.querySelector('.tourbar')!
+    this.tourFill = root.querySelector('.tour-track i')!
+    this.tourBtn = root.querySelector('[data-tour-toggle]')!
+    this.hint = root.querySelector('.hint')!
+    this.minimapCanvas = root.querySelector('.minimap')!
+
+    root.querySelectorAll<HTMLButtonElement>('[data-start]').forEach(b =>
+      b.addEventListener('click', () => {
+        root.querySelector('.start')!.classList.remove('is-open')
+        document.body.classList.add('is-running')
+        actions.start(b.dataset.start as Mode)
+      }),
+    )
+    root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b => b.addEventListener('click', () => actions.mode(b.dataset.mode as Mode)))
+    root.querySelectorAll<HTMLButtonElement>('[data-lm]').forEach(b =>
+      b.addEventListener('click', () => {
+        const l = LANDMARKS.find(x => x.num === b.dataset.lm)!
+        actions.landmark(l)
+        if (window.innerWidth < 760) document.body.classList.remove('index-open')
+      }),
+    )
+    root.querySelectorAll<HTMLButtonElement>('[data-open]').forEach(b => b.addEventListener('click', () => this.openModal(b.dataset.open!)))
+    root.querySelectorAll<HTMLElement>('.modal').forEach(m => {
+      m.addEventListener('click', e => {
+        if (e.target === m || (e.target as HTMLElement).closest('[data-close]')) m.classList.remove('is-open')
+      })
     })
-    window.addEventListener('keydown', e => this.onKey(e))
-    i18n.onChange(() => this.translate())
-    this.translate()
-    this.refreshSettings()
-  }
-
-  // ─── screens ────────────────────────────────────────────────────────────
-
-  show(screen: Screen): void {
-    this.stack.length = 0
-    this.setScreen(screen)
-  }
-
-  /** Open an overlay screen (settings, leaderboard) that returns to the current one on Back. */
-  push(screen: Screen): void {
-    this.stack.push(this.screen)
-    this.setScreen(screen)
-  }
-
-  back(): void {
-    const prev = this.stack.pop()
-    if (prev) this.setScreen(prev)
-    else if (this.screen === 'pause') this.actions.resume()
-  }
-
-  private setScreen(screen: Screen): void {
-    this.screen = screen
-    for (const el of this.root.querySelectorAll<HTMLElement>('[data-screen]')) {
-      const active = el.dataset.screen === screen || (el.dataset.screen === 'hud' && (screen === 'pause' || screen === 'results' || (screen === 'settings' && this.stack.includes('pause'))))
-      el.classList.toggle('is-active', active)
-      el.setAttribute('aria-hidden', String(!active))
-    }
-    this.root.dataset.activeScreen = screen
-    if (screen === 'title') this.renderBest()
-    if (screen === 'leaderboard') this.renderLeaderboard()
-    if (screen === 'hud') this.stormShown = false
-    // Focus the first control so keyboard and gamepad players can act immediately.
-    requestAnimationFrame(() => {
-      const first = this.navItems()[0]
-      if (first && this.input.method !== 'touch') first.focus({ preventScroll: true })
-      else (document.activeElement as HTMLElement | null)?.blur?.()
+    root.querySelector('[data-toggle-index]')!.addEventListener('click', () => document.body.classList.toggle('index-open'))
+    root.querySelector('[data-reset]')!.addEventListener('click', () => actions.reset())
+    this.tourBtn.addEventListener('click', () => actions.tourToggle())
+    root.querySelector('[data-tour-restart]')!.addEventListener('click', () => actions.tourRestart())
+    window.addEventListener('keydown', e => {
+      if (e.code === 'Escape') root.querySelectorAll('.modal.is-open').forEach(m => m.classList.remove('is-open'))
     })
+    if (window.innerWidth >= 760) document.body.classList.add('index-open')
+    this.setupTouch()
   }
 
-  setBootProgress(progress: number): void {
-    const bar = this.q<HTMLElement>('.boot-bar i')
-    bar.style.transform = `scaleX(${Math.max(0.04, Math.min(1, progress))})`
+  get modalOpen(): boolean {
+    return !!this.root.querySelector('.modal.is-open')
   }
 
-  // ─── HUD ────────────────────────────────────────────────────────────────
+  get started(): boolean {
+    return document.body.classList.contains('is-running')
+  }
 
-  updateHud(run: RunState, compass: Compass | null): void {
-    this.set('cores', `${run.collected}<small>/${run.total}</small>`)
-    this.set('score', run.score.toLocaleString(this.i18n.locale))
-    this.set('clock', formatClock(run.timeLeft))
-    const low = run.timeLeft <= CONFIG.drones.rageAt
-    this.q('.hud-clock').classList.toggle('is-low', low)
-    if (low && !this.stormShown && run.phase === 'playing') {
-      this.stormShown = true
-      this.banner(this.i18n.t('hud.storm'))
+  openModal(name: string): void {
+    if (document.pointerLockElement) document.exitPointerLock()
+    this.root.querySelector(`[data-modal="${name}"]`)?.classList.add('is-open')
+  }
+
+  setMode(mode: Mode): void {
+    document.body.dataset.mode = mode
+    this.root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b => b.classList.toggle('is-active', b.dataset.mode === mode))
+    this.tourBar.classList.toggle('is-open', mode === 'tour')
+    if (mode === 'overview') {
+      this.setHint('拖曳旋轉・滾輪縮放・點選地標可飛過去')
+      this.setCaption(null)
+    } else if (mode === 'tour') this.setHint('按任一方向鍵或拖曳畫面即可接手自由步行')
+    else this.setHint('')
+  }
+
+  setHint(text: string): void {
+    this.hint.textContent = text
+    this.hint.classList.toggle('is-open', !!text)
+  }
+
+  setWhere(text: string): void {
+    if (this.where.textContent !== text) this.where.textContent = text
+  }
+
+  setCaption(l: Landmark | null): void {
+    const key = l ? l.num : ''
+    if (this.caption.dataset.key === key) return
+    this.caption.dataset.key = key
+    if (!l) {
+      this.caption.classList.remove('is-open')
+      return
     }
-    for (const [i, cell] of this.qa('.hud-cell').entries()) cell.classList.toggle('is-empty', i >= run.lives)
+    this.caption.innerHTML = `<b>${l.num}</b><div><strong>${l.name}</strong><p>${l.desc}</p></div>`
+    this.caption.classList.add('is-open')
+  }
 
-    const combo = this.q('.hud-combo')
-    combo.classList.toggle('is-active', run.combo > 1)
-    if (run.combo > 1) {
-      if (this.set('combo', `×${run.combo}`)) {
-        combo.classList.remove('pop')
-        void combo.offsetWidth
-        combo.classList.add('pop')
+  setTour(fraction: number, paused: boolean): void {
+    this.tourFill.style.width = `${(fraction * 100).toFixed(1)}%`
+    this.tourBtn.textContent = fraction >= 1 ? '已抵達' : paused ? '繼續' : '暫停'
+  }
+
+  setActiveLandmark(num: string | null): void {
+    this.root.querySelectorAll<HTMLButtonElement>('[data-lm]').forEach(b => b.classList.toggle('is-here', b.dataset.lm === num))
+  }
+
+  toast(text: string, ms = 4200): void {
+    this.toastEl.innerHTML = text
+    this.toastEl.classList.add('is-open')
+    window.clearTimeout(this.toastTimer)
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('is-open'), ms)
+  }
+
+  private setupTouch(): void {
+    const layer = this.root.querySelector<HTMLElement>('.touch')!
+    const stick = layer.querySelector<HTMLElement>('.touch-stick')!
+    const knob = stick.querySelector<HTMLElement>('i')!
+    const radius = 54
+    if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('has-touch')
+    window.addEventListener('touchstart', () => document.body.classList.add('has-touch'), { once: true, passive: true })
+    let stickId: number | null = null
+    let lookId: number | null = null
+    let origin = { x: 0, y: 0 }
+    let last = { x: 0, y: 0 }
+    const canvas = document.querySelector<HTMLCanvasElement>('#game')!
+    canvas.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'touch' || document.body.dataset.mode === 'overview') return
+      if (e.clientX < window.innerWidth * 0.45 && stickId === null) {
+        stickId = e.pointerId
+        origin = { x: e.clientX, y: e.clientY }
+        stick.style.left = `${e.clientX}px`
+        stick.style.top = `${e.clientY}px`
+        stick.classList.add('is-active')
+      } else if (lookId === null) {
+        lookId = e.pointerId
+        last = { x: e.clientX, y: e.clientY }
       }
-      this.q<HTMLElement>('.hud-combo-bar i').style.transform = `scaleX(${run.comboTimer / CONFIG.score.comboWindow})`
-    }
-
-    const compassEl = this.q<HTMLElement>('.hud-compass')
-    compassEl.classList.toggle('is-hidden', !compass)
-    if (compass) {
-      this.q<HTMLElement>('.hud-compass-arrow').style.transform = `rotate(${-compass.angle}rad)`
-      this.set('distance', this.i18n.t('hud.nearest', { m: Math.round(compass.distance) }))
-      compassEl.dataset.rise = compass.rise > 2 ? 'up' : compass.rise < -2 ? 'down' : ''
-    }
-  }
-
-  popup(text: string, at: { x: number; y: number }, kind: 'score' | 'hurt'): void {
-    const el = document.createElement('div')
-    el.className = `popup popup-${kind}`
-    el.textContent = text
-    el.style.left = `${at.x}px`
-    el.style.top = `${at.y}px`
-    this.q('.popups').append(el)
-    el.addEventListener('animationend', () => el.remove())
-  }
-
-  hurt(): void {
-    const v = this.q('.hurt-vignette')
-    v.classList.remove('flash')
-    void (v as HTMLElement).offsetWidth
-    v.classList.add('flash')
-  }
-
-  hint(hint: Hint | null): void {
-    this.hintKey = hint
-    this.renderHint()
-  }
-
-  private renderHint(): void {
-    const el = this.q('.hint')
-    const hint = this.hintKey
-    if (!hint) {
-      el.classList.remove('is-active')
-      return
-    }
-    const method = this.input.method
-    const glyph = method === 'gamepad' ? GLYPH.gamepad : GLYPH.keyboard
-    const key = hint === 'cores' ? 'hint.cores' : `hint.${hint}.${method === 'touch' && hint === 'look' ? 'keyboard' : method}`
-    const vars = { keys: glyph.keys, stick: hint === 'look' ? GLYPH.gamepad.stickR : GLYPH.gamepad.keys, key: hint === 'dash' ? glyph.dash : glyph.jump }
-    el.querySelector('span')!.innerHTML = this.i18n.t(key, vars)
-    el.classList.add('is-active')
-  }
-
-  private banner(text: string): void {
-    const el = this.q('.banner')
-    el.textContent = text
-    el.classList.remove('show')
-    void (el as HTMLElement).offsetWidth
-    el.classList.add('show')
-  }
-
-  // ─── results ────────────────────────────────────────────────────────────
-
-  showResults(run: RunState): void {
-    this.lastRun = run
-    this.savedRank = -1
-    const won = run.phase === 'won'
-    const el = this.q('[data-screen="results"]')
-    el.classList.toggle('is-won', won)
-    const titleKey = won ? 'results.won' : run.loseReason === 'time' ? 'results.lost.time' : 'results.lost.lives'
-    this.q('.results-title').setAttribute('data-i18n', titleKey)
-    const n = stars(run)
-    for (const [i, s] of this.qa('.results-stars .star').entries()) {
-      s.classList.toggle('is-on', i < n)
-      ;(s as HTMLElement).style.animationDelay = `${0.35 + i * 0.22}s`
-    }
-    const coreScore = run.score - run.timeBonus - run.lifeBonus
-    const fmt = (v: number) => v.toLocaleString(this.i18n.locale)
-    this.q('.r-cores').textContent = `${run.collected} / ${run.total}`
-    this.q('.r-core-score').textContent = fmt(coreScore)
-    this.q('.r-time').textContent = formatClock(run.elapsed)
-    this.q('.r-time-bonus').textContent = `+${fmt(run.timeBonus)}`
-    this.q('.r-life-bonus').textContent = `+${fmt(run.lifeBonus)}`
-    this.q('.r-total').textContent = fmt(run.score)
-    const best = this.save.data.leaderboard[0]?.score ?? 0
-    this.q('.results-best').classList.toggle('is-active', run.score > best && run.score > 0)
-    const form = this.q('.results-save')
-    form.classList.toggle('is-hidden', run.score <= 0 || insertScore(this.save.data.leaderboard, this.entry(run)).rank < 0)
-    form.classList.remove('is-saved')
-    this.q<HTMLInputElement>('.results-name').value = this.save.data.playerName
-    this.q('.results-rank').textContent = ''
-    this.translate()
-    this.show('results')
-  }
-
-  private entry(run: RunState) {
-    return { name: this.q<HTMLInputElement>('.results-name')?.value.trim().slice(0, 16) || this.save.data.playerName, score: run.score, seconds: Math.round(run.elapsed), at: Date.now() }
-  }
-
-  private saveScore(): void {
-    if (!this.lastRun || this.savedRank >= 0) return
-    const entry = this.entry(this.lastRun)
-    const { board, rank } = insertScore(this.save.data.leaderboard, entry)
-    this.save.update({ leaderboard: board, playerName: entry.name })
-    this.savedRank = rank
-    this.q('.results-save').classList.add('is-saved')
-    this.q('.results-rank').textContent = rank >= 0 ? this.i18n.t('results.rank', { rank: rank + 1 }) : ''
-    this.audio.play('ui')
-  }
-
-  private renderLeaderboard(): void {
-    const list = this.q('.board')
-    const board = this.save.data.leaderboard
-    if (board.length === 0) {
-      list.innerHTML = `<li class="board-empty">${this.i18n.t('leaderboard.empty')}</li>`
-      return
-    }
-    list.innerHTML = board
-      .map((e, i) => `<li class="${i === this.savedRank ? 'is-me' : ''}"><b>${i + 1}</b><span class="board-name"></span><span>${formatClock(e.seconds)}</span><em>${e.score.toLocaleString(this.i18n.locale)}</em></li>`)
-      .join('')
-    // Names are player-entered text: assign via textContent, never innerHTML.
-    list.querySelectorAll('.board-name').forEach((el, i) => (el.textContent = board[i].name))
-  }
-
-  private renderBest(): void {
-    const best = this.save.data.leaderboard[0]?.score ?? 0
-    const el = this.q('.title-best')
-    el.classList.toggle('is-hidden', best <= 0)
-    el.textContent = this.i18n.t('menu.best', { score: best.toLocaleString(this.i18n.locale) })
-  }
-
-  // ─── settings ───────────────────────────────────────────────────────────
-
-  /** Re-read the save into the Settings controls (call after changing settings outside the UI). */
-  refreshSettings(): void {
-    const d = this.save.data
-    this.q<HTMLInputElement>('[name="musicVolume"]').value = String(d.musicVolume)
-    this.q<HTMLInputElement>('[name="sfxVolume"]').value = String(d.sfxVolume)
-    this.q<HTMLInputElement>('[name="sensitivity"]').value = String(d.sensitivity)
-    for (const t of this.qa<HTMLButtonElement>('.toggle')) {
-      const on = d[t.dataset.setting as 'muted' | 'invertY' | 'reducedMotion'] === true
-      t.setAttribute('aria-pressed', String(on))
-      t.querySelector('span')!.setAttribute('data-i18n', on ? 'settings.on' : 'settings.off')
-    }
-    for (const b of this.qa<HTMLButtonElement>('.seg button')) {
-      const key = b.parentElement!.dataset.setting as 'quality' | 'locale'
-      const current = key === 'locale' ? this.i18n.locale : d.quality
-      b.setAttribute('aria-pressed', String(b.dataset.value === current))
-    }
-    for (const r of this.qa<HTMLInputElement>('input[type="range"]')) r.style.setProperty('--fill', `${((Number(r.value) - Number(r.min)) / (Number(r.max) - Number(r.min))) * 100}%`)
-    this.translate()
-  }
-
-  // ─── events ─────────────────────────────────────────────────────────────
-
-  private onClick(e: MouseEvent): void {
-    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action], .toggle, .seg button')
-    if (!target) return
-    this.audio.unlock()
-    if (target.matches('.toggle')) {
-      const key = target.dataset.setting as 'muted' | 'invertY' | 'reducedMotion'
-      this.actions.settings({ [key]: !this.save.data[key] })
-      this.refreshSettings()
-      this.audio.play('ui')
-      return
-    }
-    if (target.matches('.seg button')) {
-      const key = target.parentElement!.dataset.setting
-      if (key === 'quality') this.actions.settings({ quality: target.dataset.value as Quality })
-      if (key === 'locale') this.actions.settings({ locale: target.dataset.value as Locale })
-      this.refreshSettings()
-      this.audio.play('ui')
-      return
-    }
-    const action = target.dataset.action
-    switch (action) {
-      case 'play': this.actions.play(); break
-      case 'resume': this.actions.resume(); break
-      case 'restart': this.actions.restart(); break
-      case 'quit': this.actions.quit(); break
-      case 'settings': this.push('settings'); break
-      case 'leaderboard': this.push('leaderboard'); break
-      case 'back': this.back(); break
-      case 'save-score': this.saveScore(); break
-      case 'pause': window.dispatchEvent(new CustomEvent('game:pause')); break
-    }
-  }
-
-  private onInput(e: Event): void {
-    const el = e.target as HTMLInputElement
-    if (el.type !== 'range') return
-    el.style.setProperty('--fill', `${((Number(el.value) - Number(el.min)) / (Number(el.max) - Number(el.min))) * 100}%`)
-    this.actions.settings({ [el.name]: Number(el.value) } as Partial<SaveData>)
-  }
-
-  private onKey(e: KeyboardEvent): void {
-    if (this.screen === 'hud' || this.screen === 'boot') return
-    const typing = (e.target as HTMLElement).matches?.('input[type="text"]')
-    if ((e.code === 'Escape' || (e.code === 'Backspace' && !typing)) && this.screen !== 'title') {
-      // The pause toggle in main.ts owns Escape on the pause screen itself.
-      if (this.screen !== 'pause' && this.screen !== 'results') {
-        e.preventDefault()
-        // Escape is also the pause toggle; consume it so leaving Settings doesn't resume the run.
-        this.input.consume('pause')
-        this.back()
+    })
+    window.addEventListener('pointermove', e => {
+      if (e.pointerId === stickId) {
+        let dx = e.clientX - origin.x
+        let dy = e.clientY - origin.y
+        const len = Math.hypot(dx, dy)
+        if (len > radius) {
+          dx = (dx / len) * radius
+          dy = (dy / len) * radius
+        }
+        knob.style.transform = `translate(${dx}px, ${dy}px)`
+        this.actions.touchMove(dx / radius, -dy / radius)
+      } else if (e.pointerId === lookId) {
+        this.actions.touchLook((e.clientX - last.x) * 0.005, (e.clientY - last.y) * 0.005)
+        last = { x: e.clientX, y: e.clientY }
       }
-      return
+    })
+    const end = (e: PointerEvent) => {
+      if (e.pointerId === stickId) {
+        stickId = null
+        knob.style.transform = ''
+        stick.classList.remove('is-active')
+        this.actions.touchMove(0, 0)
+      }
+      if (e.pointerId === lookId) lookId = null
     }
-    if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
-      e.preventDefault()
-      this.moveFocus(e.code === 'ArrowDown' ? 1 : -1)
-    }
-  }
-
-  /** Per-frame gamepad menu navigation (keyboard uses native focus + onKey). */
-  frame(frameSeconds: number): void {
-    if (this.input.method !== this.lastMethod) {
-      this.lastMethod = this.input.method
-      this.renderPrompts()
-      this.renderHint()
-    }
-    if (this.screen === 'hud' || this.screen === 'boot') return
-    if (this.input.method !== 'gamepad') {
-      this.input.consume('confirm')
-      this.input.consume('back')
-      return
-    }
-    const y = this.input.move.y
-    const x = this.input.move.x
-    this.navRepeat = Math.max(0, this.navRepeat - frameSeconds)
-    const active = document.activeElement as HTMLElement | null
-    if (Math.abs(y) > 0.6 && this.navRepeat <= 0) {
-      this.moveFocus(y < 0 ? 1 : -1)
-      this.navRepeat = 0.22
-    } else if (Math.abs(x) > 0.6 && this.navRepeat <= 0 && active?.matches('input[type="range"]')) {
-      const r = active as HTMLInputElement
-      r.value = String(Number(r.value) + Math.sign(x) * Number(r.step || 0.1))
-      r.dispatchEvent(new Event('input', { bubbles: true }))
-      this.navRepeat = 0.12
-    } else if (Math.abs(x) > 0.6 && this.navRepeat <= 0 && active?.parentElement?.matches('.seg')) {
-      const sib = (Math.sign(x) > 0 ? active.nextElementSibling : active.previousElementSibling) as HTMLElement | null
-      sib?.focus()
-      this.navRepeat = 0.22
-    } else if (Math.abs(y) < 0.3 && Math.abs(x) < 0.3) {
-      this.navRepeat = 0
-    }
-    if (this.input.consume('confirm')) active?.click()
-    if (this.input.consume('back') && this.screen !== 'title') this.back()
-  }
-
-  private navItems(): HTMLElement[] {
-    const screen = this.q(`[data-screen="${this.screen}"]`)
-    return [...screen.querySelectorAll<HTMLElement>('[data-nav]')].filter(el => el.offsetParent !== null && !el.closest('.is-hidden'))
-  }
-
-  private moveFocus(dir: 1 | -1): void {
-    const items = this.navItems()
-    if (items.length === 0) return
-    // Buttons inside one segmented control count as a single row.
-    const rows: HTMLElement[][] = []
-    for (const el of items) {
-      const seg = el.parentElement?.matches('.seg') ? el.parentElement : null
-      const last = rows[rows.length - 1]
-      if (seg && last && last[0].parentElement === seg) last.push(el)
-      else rows.push([el])
-    }
-    const current = rows.findIndex(r => r.includes(document.activeElement as HTMLElement))
-    const next = rows[(current + dir + rows.length) % rows.length]
-    ;(next.find(el => el.getAttribute('aria-pressed') === 'true') ?? next[0]).focus()
-  }
-
-  // ─── helpers ────────────────────────────────────────────────────────────
-
-  private translate(): void {
-    for (const el of this.root.querySelectorAll<HTMLElement>('[data-i18n]')) el.textContent = this.i18n.t(el.dataset.i18n!)
-    for (const el of this.root.querySelectorAll<HTMLElement>('[data-i18n-label]')) el.setAttribute('aria-label', this.i18n.t(el.dataset.i18nLabel!))
-    for (const el of this.root.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]')) el.placeholder = this.i18n.t(el.dataset.i18nPlaceholder!)
-    this.renderPrompts()
-    this.renderHint()
-    if (this.screen === 'title') this.renderBest()
-    if (this.screen === 'leaderboard') this.renderLeaderboard()
-    this.hudCache.clear()
-    document.title = this.i18n.t('game.title')
-  }
-
-  /** Bottom-bar button prompts follow the active input method. */
-  renderPrompts(): void {
-    const g = this.input.method === 'gamepad' ? GLYPH.gamepad : GLYPH.keyboard
-    const html = this.input.method === 'touch' ? '' : `<span>${g.select} ${this.i18n.t('prompt.select')}</span><span>${g.back} ${this.i18n.t('prompt.back')}</span>`
-    for (const el of this.qa('.prompts')) el.innerHTML = html
-  }
-
-  /** Update a HUD text slot only when it changed; returns true if it did. */
-  private set(slot: string, html: string): boolean {
-    if (this.hudCache.get(slot) === html) return false
-    this.hudCache.set(slot, html)
-    this.q(`[data-slot="${slot}"]`).innerHTML = html
-    return true
-  }
-
-  private q<T extends HTMLElement = HTMLElement>(sel: string): T {
-    return this.root.querySelector<T>(sel)!
-  }
-
-  private qa<T extends HTMLElement = HTMLElement>(sel: string): T[] {
-    return [...this.root.querySelectorAll<T>(sel)]
-  }
-
-  private template(): string {
-    const range = (name: string, label: string, min: number, max: number, step: number) =>
-      `<label class="row"><span data-i18n="${label}"></span><input data-nav type="range" name="${name}" min="${min}" max="${max}" step="${step}"></label>`
-    const toggle = (setting: string, label: string) =>
-      `<div class="row"><span data-i18n="${label}"></span><button data-nav class="toggle" data-setting="${setting}" aria-pressed="false"><i></i><span></span></button></div>`
-    return /* html */ `
-<section class="screen screen-boot is-active" data-screen="boot">
-  <div class="boot-logo" data-i18n="game.title"></div>
-  <div class="boot-bar"><i></i></div>
-  <div class="boot-label" data-i18n="boot.loading"></div>
-</section>
-
-<section class="screen screen-title" data-screen="title">
-  <div class="title-vignette"></div>
-  <div class="title-best is-hidden"></div>
-  <div class="title-block">
-    <div class="logo">
-      <span class="logo-gem">${ICON.core}</span>
-      <h1 class="logo-text" data-i18n="game.title"></h1>
-    </div>
-    <p class="tagline" data-i18n="game.tagline"></p>
-    <nav class="menu">
-      <button data-nav class="btn btn-primary" data-action="play"><span data-i18n="menu.play"></span></button>
-      <button data-nav class="btn" data-action="leaderboard"><span data-i18n="menu.leaderboard"></span></button>
-      <button data-nav class="btn" data-action="settings"><span data-i18n="menu.settings"></span></button>
-    </nav>
-  </div>
-  <footer class="bottom-bar"><div class="prompts"></div><small data-i18n="credits.fonts"></small></footer>
-</section>
-
-<section class="screen screen-hud" data-screen="hud">
-  <div class="hurt-vignette"></div>
-  <div class="popups"></div>
-  <div class="hud-top-left">
-    <div class="hud-panel hud-cores"><span class="hud-core-icon">${ICON.core}</span><b data-slot="cores"></b></div>
-    <div class="hud-score"><span data-i18n="hud.score"></span><b data-slot="score"></b></div>
-  </div>
-  <div class="hud-top-center">
-    <div class="hud-clock"><b data-slot="clock"></b></div>
-    <div class="hud-compass"><span class="hud-compass-arrow">${ICON.arrow}</span><b data-slot="distance"></b></div>
-  </div>
-  <div class="hud-top-right">
-    <div class="hud-cells">${`<span class="hud-cell">${ICON.cell}</span>`.repeat(CONFIG.run.lives)}</div>
-    <button class="hud-pause" data-action="pause" data-i18n-label="touch.pause">${ICON.pause}</button>
-  </div>
-  <div class="hud-combo"><b data-slot="combo"></b><span data-i18n="hud.combo"></span><div class="hud-combo-bar"><i></i></div></div>
-  <div class="banner"></div>
-  <div class="hint"><span></span></div>
-  <div class="touch">
-    <div class="touch-stick"><i></i></div>
-    <button class="touch-btn touch-dash" data-touch="dash"><span data-i18n="touch.dash"></span></button>
-    <button class="touch-btn touch-jump" data-touch="jump"><span data-i18n="touch.jump"></span></button>
-  </div>
-</section>
-
-<section class="screen screen-pause screen-modal" data-screen="pause">
-  <div class="modal">
-    <h2 class="modal-title" data-i18n="pause.title"></h2>
-    <nav class="menu">
-      <button data-nav class="btn btn-primary" data-action="resume"><span data-i18n="menu.continue"></span></button>
-      <button data-nav class="btn" data-action="restart"><span data-i18n="menu.restart"></span></button>
-      <button data-nav class="btn" data-action="settings"><span data-i18n="menu.settings"></span></button>
-      <button data-nav class="btn" data-action="quit"><span data-i18n="menu.quit"></span></button>
-    </nav>
-  </div>
-  <footer class="bottom-bar"><div class="prompts"></div></footer>
-</section>
-
-<section class="screen screen-settings screen-modal" data-screen="settings">
-  <div class="modal modal-wide">
-    <h2 class="modal-title" data-i18n="settings.title"></h2>
-    <div class="settings-grid">
-      <fieldset><legend data-i18n="settings.audio"></legend>
-        ${range('musicVolume', 'settings.music', 0, 1, 0.05)}
-        ${range('sfxVolume', 'settings.sfx', 0, 1, 0.05)}
-        ${toggle('muted', 'settings.mute')}
-      </fieldset>
-      <fieldset><legend data-i18n="settings.controls"></legend>
-        ${range('sensitivity', 'settings.sensitivity', 0.2, 3, 0.1)}
-        ${toggle('invertY', 'settings.invertY')}
-      </fieldset>
-      <fieldset><legend data-i18n="settings.display"></legend>
-        <div class="row"><span data-i18n="settings.quality"></span><div class="seg" data-setting="quality">
-          <button data-nav data-value="low" data-i18n="settings.quality.low"></button><button data-nav data-value="medium" data-i18n="settings.quality.medium"></button><button data-nav data-value="high" data-i18n="settings.quality.high"></button>
-        </div></div>
-        ${toggle('reducedMotion', 'settings.reducedMotion')}
-        <div class="row"><span data-i18n="settings.language"></span><div class="seg" data-setting="locale">
-          <button data-nav data-value="en" lang="en">English</button><button data-nav data-value="zh-CN" lang="zh-CN">简体中文</button>
-        </div></div>
-      </fieldset>
-    </div>
-    <nav class="menu menu-row"><button data-nav class="btn" data-action="back"><span data-i18n="menu.back"></span></button></nav>
-  </div>
-  <footer class="bottom-bar"><div class="prompts"></div></footer>
-</section>
-
-<section class="screen screen-leaderboard screen-modal" data-screen="leaderboard">
-  <div class="modal">
-    <h2 class="modal-title" data-i18n="leaderboard.title"></h2>
-    <div class="board-head"><b>#</b><span></span><span data-i18n="leaderboard.time"></span><em data-i18n="leaderboard.score"></em></div>
-    <ol class="board"></ol>
-    <nav class="menu menu-row"><button data-nav class="btn" data-action="back"><span data-i18n="menu.back"></span></button></nav>
-  </div>
-  <footer class="bottom-bar"><div class="prompts"></div></footer>
-</section>
-
-<section class="screen screen-results screen-modal" data-screen="results">
-  <div class="modal modal-results">
-    <div class="results-stars">${`<span class="star">${ICON.star}</span>`.repeat(3)}</div>
-    <h2 class="results-title modal-title"></h2>
-    <div class="results-best" data-i18n="results.newBest"></div>
-    <dl class="results-table">
-      <div><dt data-i18n="results.cores"></dt><dd class="r-cores"></dd><dd class="r-core-score"></dd></div>
-      <div><dt data-i18n="results.time"></dt><dd class="r-time"></dd><dd></dd></div>
-      <div class="r-bonus"><dt data-i18n="results.timeBonus"></dt><dd></dd><dd class="r-time-bonus"></dd></div>
-      <div class="r-bonus"><dt data-i18n="results.lifeBonus"></dt><dd></dd><dd class="r-life-bonus"></dd></div>
-      <div class="r-total-row"><dt data-i18n="results.total"></dt><dd></dd><dd class="r-total"></dd></div>
-    </dl>
-    <div class="results-save">
-      <input data-nav class="results-name" type="text" maxlength="16" autocomplete="off" spellcheck="false" data-i18n-placeholder="results.name">
-      <button data-nav class="btn btn-small" data-action="save-score"><span data-i18n="results.save"></span></button>
-      <span class="results-saved" data-i18n="results.saved"></span>
-      <span class="results-rank"></span>
-    </div>
-    <nav class="menu menu-row">
-      <button data-nav class="btn btn-primary" data-action="restart"><span data-i18n="results.retry"></span></button>
-      <button data-nav class="btn" data-action="quit"><span data-i18n="results.title"></span></button>
-    </nav>
-  </div>
-</section>`
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
   }
 }
