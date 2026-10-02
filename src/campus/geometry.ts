@@ -1,6 +1,6 @@
-import { BUILDINGS, CAMPUS_POLYGON, type Building, type Vec2 } from './data'
+import { AREAS, BUILDINGS, NEIGHBORS, PATHS, type Box, type Vec2 } from './data'
 
-export function pointInPolygon(p: Vec2, poly: Vec2[] = CAMPUS_POLYGON): boolean {
+export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
   let inside = false
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[i]
@@ -10,12 +10,17 @@ export function pointInPolygon(p: Vec2, poly: Vec2[] = CAMPUS_POLYGON): boolean 
   return inside
 }
 
-export function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+export function closestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   const dx = b.x - a.x
   const dz = b.z - a.z
   const len2 = dx * dx + dz * dz
   const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / len2))
-  return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz))
+  return { x: a.x + t * dx, z: a.z + t * dz }
+}
+
+export function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const c = closestOnSegment(p, a, b)
+  return Math.hypot(p.x - c.x, p.z - c.z)
 }
 
 export function distToPolyline(p: Vec2, line: Vec2[]): number {
@@ -24,64 +29,61 @@ export function distToPolyline(p: Vec2, line: Vec2[]): number {
   return d
 }
 
-/** 到多邊形邊界的距離 */
-export function distToPolygonEdge(p: Vec2, poly: Vec2[] = CAMPUS_POLYGON): number {
+export function distToPolygonEdge(p: Vec2, poly: Vec2[]): number {
   let d = Infinity
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) d = Math.min(d, distToSegment(p, poly[j], poly[i]))
   return d
 }
 
-/** 轉到建築本地座標 */
-function toLocal(p: Vec2, b: Building): Vec2 {
-  const dx = p.x - b.x
-  const dz = p.z - b.z
-  const c = Math.cos(b.rot)
-  const s = Math.sin(b.rot)
-  // three.js 繞 y 旋轉：world = R * local，其中 x' = x c + z s, z' = -x s + z c
-  return { x: dx * c - dz * s, z: dx * s + dz * c }
-}
-
-function toWorld(l: Vec2, b: Building): Vec2 {
-  const c = Math.cos(b.rot)
-  const s = Math.sin(b.rot)
-  return { x: b.x + l.x * c + l.z * s, z: b.z - l.x * s + l.z * c }
-}
-
-export function insideBuilding(p: Vec2, b: Building, pad = 0): boolean {
-  const l = toLocal(p, b)
-  return Math.abs(l.x) < b.w / 2 + pad && Math.abs(l.z) < b.d / 2 + pad
-}
-
-export function buildingCorners(b: Building): Vec2[] {
-  return [
-    { x: -b.w / 2, z: -b.d / 2 },
-    { x: b.w / 2, z: -b.d / 2 },
-    { x: b.w / 2, z: b.d / 2 },
-    { x: -b.w / 2, z: b.d / 2 },
-  ].map(l => toWorld(l, b))
-}
-
-/** 將圓形（玩家）推出建築的矩形範圍 */
-export function pushOutOfBuilding(p: Vec2, b: Building, r: number): Vec2 {
-  const l = toLocal(p, b)
-  const hx = b.w / 2
-  const hz = b.d / 2
-  const cx = Math.max(-hx, Math.min(hx, l.x))
-  const cz = Math.max(-hz, Math.min(hz, l.z))
-  const dx = l.x - cx
-  const dz = l.z - cz
-  const d = Math.hypot(dx, dz)
-  if (d >= r) return p
-  let nl: Vec2
-  if (d > 1e-6) {
-    nl = { x: cx + (dx / d) * r, z: cz + (dz / d) * r }
-  } else {
-    // 中心落在矩形內：從最近的邊推出
-    const px = hx - Math.abs(l.x)
-    const pz = hz - Math.abs(l.z)
-    nl = px < pz ? { x: Math.sign(l.x || 1) * (hx + r), z: l.z } : { x: l.x, z: Math.sign(l.z || 1) * (hz + r) }
+export function boxOf(pts: Vec2[]): Box {
+  let x0 = Infinity
+  let x1 = -Infinity
+  let z0 = Infinity
+  let z1 = -Infinity
+  for (const p of pts) {
+    x0 = Math.min(x0, p.x)
+    x1 = Math.max(x1, p.x)
+    z0 = Math.min(z0, p.z)
+    z1 = Math.max(z1, p.z)
   }
-  return toWorld(nl, b)
+  return { x0, x1, z0, z1 }
+}
+
+function nearBox(p: Vec2, b: Box, pad: number): boolean {
+  return p.x > b.x0 - pad && p.x < b.x1 + pad && p.z > b.z0 - pad && p.z < b.z1 + pad
+}
+
+function centroidOf(poly: Vec2[]): Vec2 {
+  return { x: poly.reduce((s, q) => s + q.x, 0) / poly.length, z: poly.reduce((s, q) => s + q.z, 0) / poly.length }
+}
+
+/** 將半徑 r 的圓推出多邊形；未接觸則原樣回傳 */
+export function pushOutOfPolygon(p: Vec2, poly: Vec2[], r: number): Vec2 {
+  let best: Vec2 | null = null
+  let bestD = Infinity
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const c = closestOnSegment(p, poly[j], poly[i])
+    const d = Math.hypot(p.x - c.x, p.z - c.z)
+    if (d < bestD) {
+      bestD = d
+      best = c
+    }
+  }
+  if (!best) return p
+  const inside = pointInPolygon(p, poly)
+  if (!inside && bestD >= r) return p
+  let nx = p.x - best.x
+  let nz = p.z - best.z
+  let len = Math.hypot(nx, nz)
+  let s = inside ? -1 : 1
+  if (len < 1e-6) {
+    const c = centroidOf(poly)
+    nx = p.x - c.x
+    nz = p.z - c.z
+    len = Math.hypot(nx, nz) || 1
+    s = 1
+  }
+  return { x: best.x + ((s * nx) / len) * (r + 0.001), z: best.z + ((s * nz) / len) * (r + 0.001) }
 }
 
 export interface Obstacle {
@@ -90,15 +92,71 @@ export interface Obstacle {
   r: number
 }
 
+interface Solid {
+  pts: Vec2[]
+  box: Box
+}
+/** 所有地面層實體（校舍地面層多邊形 + 校外建物） */
+export const SOLIDS: Solid[] = [
+  ...BUILDINGS.flatMap(b => b.ground.map(g => ({ pts: g, box: boxOf(g) }))),
+  ...NEIGHBORS.map(n => ({ pts: n.pts, box: n.box })),
+]
+
+const AREA_BOXES = AREAS.map(a => ({ a, box: boxOf(a.pts) }))
+const PATH_BOXES = PATHS.map(p => ({ p, box: boxOf(p.pts) }))
+
+/** 位於鋪面區域或步道範圍內（不考慮建物） */
+export function onPaved(p: Vec2): boolean {
+  for (const { p: path, box } of PATH_BOXES) {
+    const half = path.w / 2
+    if (!nearBox(p, box, half)) continue
+    if (distToPolyline(p, path.pts) <= half) return true
+  }
+  for (const { a, box } of AREA_BOXES) {
+    if (nearBox(p, box, 0) && pointInPolygon(p, a.pts)) return true
+  }
+  return false
+}
+
+/** 位於哪一條步道（取最近者）；不在任何步道上回傳 null */
+export function pathAt(p: Vec2): (typeof PATHS)[number] | null {
+  let best: (typeof PATHS)[number] | null = null
+  let bestD = Infinity
+  for (const { p: path, box } of PATH_BOXES) {
+    const half = path.w / 2
+    if (!nearBox(p, box, half)) continue
+    const d = distToPolyline(p, path.pts)
+    if (d <= half && d < bestD) {
+      bestD = d
+      best = path
+    }
+  }
+  return best
+}
+
+export function insideSolid(p: Vec2, pad = 0): boolean {
+  for (const s of SOLIDS) {
+    if (!nearBox(p, s.box, pad)) continue
+    if (pointInPolygon(p, s.pts)) return true
+    if (pad > 0 && distToPolygonEdge(p, s.pts) < pad) return true
+  }
+  return false
+}
+
+/** 可以站立：位於鋪面且不在建物內 */
+export function isWalkable(p: Vec2, radius = 0.4): boolean {
+  return onPaved(p) && !insideSolid(p, radius)
+}
+
 /**
- * 嘗試把玩家由 from 移到 to：先推出建築／障礙，若離開校園範圍則改沿單軸滑動，
- * 都不行就留在原地。回傳最終位置。
+ * 嘗試把玩家由 from 移到 to：先推出建物／障礙，若離開可步行範圍則改沿單軸滑動，
+ * 都不行就留在原地。
  */
-export function resolveMove(from: Vec2, to: Vec2, radius = 0.4, extra: Obstacle[] = [], buildings: Building[] = BUILDINGS): Vec2 {
+export function resolveMove(from: Vec2, to: Vec2, radius = 0.4, extra: Obstacle[] = []): Vec2 {
   const solve = (p: Vec2): Vec2 | null => {
     let q = p
-    for (let iter = 0; iter < 2; iter++) {
-      for (const b of buildings) q = pushOutOfBuilding(q, b, radius)
+    for (let iter = 0; iter < 3; iter++) {
+      for (const s of SOLIDS) if (nearBox(q, s.box, radius + 0.5)) q = pushOutOfPolygon(q, s.pts, radius)
       for (const o of extra) {
         const dx = q.x - o.x
         const dz = q.z - o.z
@@ -107,14 +165,10 @@ export function resolveMove(from: Vec2, to: Vec2, radius = 0.4, extra: Obstacle[
         if (d < min && d > 1e-6) q = { x: o.x + (dx / d) * min, z: o.z + (dz / d) * min }
       }
     }
-    return pointInPolygon(q) ? q : null
+    if (Math.hypot(q.x - p.x, q.z - p.z) > 2.5) return null
+    return onPaved(q) && !insideSolid(q) ? q : null
   }
   return solve(to) ?? solve({ x: to.x, z: from.z }) ?? solve({ x: from.x, z: to.z }) ?? from
-}
-
-export function isWalkable(p: Vec2, radius = 0.4): boolean {
-  if (!pointInPolygon(p)) return false
-  return !BUILDINGS.some(b => insideBuilding(p, b, radius))
 }
 
 export function routeLength(route: Vec2[]): number {
@@ -138,4 +192,13 @@ export function samplePath(route: Vec2[], s: number): { p: Vec2; dir: Vec2; inde
   }
   const last = route[route.length - 1]
   return { p: last, dir: { x: 0, z: -1 }, index: route.length - 2 }
+}
+
+/** 等距取樣折線 */
+export function resample(line: Vec2[], step: number): Vec2[] {
+  const out: Vec2[] = []
+  const total = routeLength(line)
+  const n = Math.max(1, Math.ceil(total / step))
+  for (let i = 0; i <= n; i++) out.push(samplePath(line, (total * i) / n).p)
+  return out
 }

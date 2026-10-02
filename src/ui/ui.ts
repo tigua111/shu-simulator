@@ -1,4 +1,4 @@
-import { LANDMARKS, type Landmark } from '../campus/data'
+import { LANDMARKS, type Landmark } from '../campus/landmarks'
 import type { Mode } from '../campus/explorer'
 
 export const LOGO_SVG = `<svg viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" fill="#a3122b"/><path d="M8 40V16h32v24H30V27a6 6 0 0 0-12 0v13Z" fill="#e7b9a6"/><rect x="6" y="11" width="36" height="5" fill="#fbf6ee"/></svg>`

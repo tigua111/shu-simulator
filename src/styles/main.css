@@ -526,7 +526,7 @@ body.is-locked .crosshair {
   position: fixed;
   right: calc(14px + var(--safe-r));
   bottom: calc(14px + var(--safe-b));
-  width: 220px;
+  width: 340px;
   padding: 6px;
   background: var(--paper);
   border-radius: 16px;
@@ -535,7 +535,7 @@ body.is-locked .crosshair {
 .minimap {
   display: block;
   width: 100%;
-  aspect-ratio: 425 / 385;
+  aspect-ratio: 562 / 220;
   border-radius: 11px;
   cursor: crosshair;
 }
@@ -776,7 +776,7 @@ body.has-touch.is-running:not([data-mode='overview']) .touch {
     font-size: 0.72rem;
   }
   .minimap-wrap {
-    width: 128px;
+    width: 190px;
     top: calc(64px + var(--safe-t));
     bottom: auto;
     right: calc(10px + var(--safe-r));

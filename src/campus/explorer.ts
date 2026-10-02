@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { DESTINATION, ROUTE, START, baseHeight, type Landmark, type Vec2 } from './data'
+import { DESTINATION, ROUTE, START, groundHeight, type Vec2 } from './data'
+import type { Landmark } from './landmarks'
 import { resolveMove, routeLength, samplePath, type Obstacle } from './geometry'
 
 export type Mode = 'walk' | 'overview' | 'tour'
@@ -46,7 +47,7 @@ export class Explorer {
   tourPaused = false
   /** 偏好減少動態效果 */
   reducedMotion = false
-  private eyeY = baseHeight(START.pos.z) + EYE
+  private eyeY = groundHeight(START.pos.x, START.pos.z) + EYE
   private keys = new Set<string>()
   private touchMove = { x: 0, y: 0 }
   private vel = { x: 0, z: 0 }
@@ -70,7 +71,7 @@ export class Explorer {
     this.orbit.enableDamping = true
     this.orbit.maxPolarAngle = Math.PI * 0.46
     this.orbit.minDistance = 30
-    this.orbit.maxDistance = 520
+    this.orbit.maxDistance = 1000
     this.orbit.screenSpacePanning = false
 
     this.avatar = new THREE.Group()
@@ -136,8 +137,8 @@ export class Explorer {
       this.avatar.visible = true
       this.orbit.enabled = true
       // 總覽：框住前校門到傳播大廈的整個校園
-      const target = new THREE.Vector3(5, 8, -35)
-      this.startFly(new THREE.Vector3(target.x - 110, 285, target.z + 255), target, this.camera.position.clone(), this.walkLookTarget())
+      const target = new THREE.Vector3(15, 18, 30)
+      this.startFly(new THREE.Vector3(target.x - 120, 430, target.z + 360), target, this.camera.position.clone(), this.walkLookTarget())
     } else {
       this.avatar.visible = false
       this.orbit.enabled = false
@@ -164,15 +165,15 @@ export class Explorer {
     this.pos = { ...p }
     if (look) this.yaw = Math.atan2(-(look.x - p.x), -(look.z - p.z))
     this.pitch = 0.08
-    this.eyeY = baseHeight(p.z) + EYE
+    this.eyeY = groundHeight(p.x, p.z) + EYE
     this.vel = { x: 0, z: 0 }
-    if (this.mode === 'overview') this.avatar.position.set(p.x, baseHeight(p.z), p.z)
+    if (this.mode === 'overview') this.avatar.position.set(p.x, groundHeight(p.x, p.z), p.z)
     this.applyWalkCamera()
   }
 
   goToLandmark(l: Landmark): void {
     if (this.mode === 'overview') {
-      const y = baseHeight(l.at.z)
+      const y = groundHeight(l.at.x, l.at.z)
       const target = new THREE.Vector3(l.at.x, y + 6, l.at.z)
       const off = this.camera.position.clone().sub(this.orbit.target).setLength(Math.max(80, l.labelHeight * 3))
       off.y = Math.max(off.y, 45)
@@ -260,10 +261,10 @@ export class Explorer {
       if (this.fly.t >= 1) this.fly = null
     }
     this.orbit.update()
-    this.avatar.position.set(this.pos.x, baseHeight(this.pos.z), this.pos.z)
+    this.avatar.position.set(this.pos.x, groundHeight(this.pos.x, this.pos.z), this.pos.z)
     this.avatar.rotation.y = this.yaw
     const d = this.camera.position.distanceTo(this.orbit.target)
-    this.avatar.scale.setScalar(Math.max(1, d / 120))
+    this.avatar.scale.setScalar(Math.max(1, d / 100))
   }
 
   private startFly(toPos: THREE.Vector3, toTarget: THREE.Vector3, fromPos = this.camera.position.clone(), fromTarget = this.orbit.target.clone()): void {
@@ -276,7 +277,7 @@ export class Explorer {
   }
 
   private applyWalkCamera(dt = 1): void {
-    const target = baseHeight(this.pos.z) + EYE
+    const target = groundHeight(this.pos.x, this.pos.z) + EYE
     this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * 10))
     this.camera.position.set(this.pos.x, this.eyeY, this.pos.z)
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ')

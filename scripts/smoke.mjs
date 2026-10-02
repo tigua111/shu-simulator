@@ -12,7 +12,7 @@ const out = process.env.SHOTS_DIR ?? 'shots'
 mkdirSync(out, { recursive: true })
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { stdio: 'ignore', detached: false })
 let browser
-const guard = setTimeout(() => fail('timed out'), 420_000)
+const guard = setTimeout(() => fail('timed out'), 900_000)
 function cleanup() {
   clearTimeout(guard)
   try {
@@ -74,42 +74,62 @@ try {
   await page.click('[data-start="walk"]')
   await page.waitForTimeout(1200)
   let s = await state(page)
-  check(s.mode === 'walk' && Math.abs(s.x + 104) < 1 && s.z > 140, `starts at the front gate (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`)
+  check(s.mode === 'walk' && Math.abs(s.x + 241) < 1 && Math.abs(s.z - 109.5) < 1, `starts at the front gate on 木柵路 (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`)
   await shot(page, '02-gate')
 
-  // 鍵盤前進：穿過校門隧道
+  // 鍵盤前進：走到拱門口
   await page.keyboard.down('KeyW')
-  await step(page, 170)
+  await step(page, 60)
   await page.keyboard.up('KeyW')
   s = await state(page)
-  check(s.z < 120, `W walks north through the gate tunnel (z=${s.z.toFixed(1)})`)
-  check(s.x > -107.5 && s.x < -100.5, `tunnel walls keep the walker inside (x=${s.x.toFixed(1)})`)
+  check(s.z < 100, `W walks from the street to the gate arch (z=${s.z.toFixed(1)})`)
+  // 轉向隧道方向（東北）並穿過隧道
+  await page.evaluate(() => {
+    const { explorer } = window.__campus
+    explorer.teleport({ x: -232.4, z: 86.1 })
+    explorer.yaw = Math.atan2(-54.6, 47.8)
+  })
+  await page.keyboard.down('KeyW')
+  await step(page, 160)
+  await page.keyboard.up('KeyW')
+  s = await state(page)
+  const along = ((s.x + 232.9) * 54.6 + (s.z - 86.5) * -47.8) / Math.hypot(54.6, 47.8)
+  const across = Math.abs(((s.x + 232.9) * -47.8 - (s.z - 86.5) * 54.6) / Math.hypot(54.6, 47.8))
+  check(along > 25, `walks through the tunnel (${along.toFixed(1)} m in)`)
+  check(across < 3.5, `stays inside the tunnel (${across.toFixed(2)} m off-axis)`)
   await shot(page, '03-tunnel')
-
-  // 碰撞：朝東撞隧道牆
+  // 碰撞：朝側面撞隧道牆
   await page.keyboard.down('KeyD')
   await step(page, 60)
   await page.keyboard.up('KeyD')
-  await page.waitForTimeout(600)
   s = await state(page)
-  check(s.x < -100.5, `tunnel wall blocks sideways movement (x=${s.x.toFixed(1)})`)
+  const across2 = Math.abs(((s.x + 232.9) * -47.8 - (s.z - 86.5) * 54.6) / Math.hypot(54.6, 47.8))
+  check(across2 < 3.5, `tunnel wall blocks sideways movement (${across2.toFixed(2)} m off-axis)`)
 
   for (const [num, name] of [
-    ['04', 'cuigu'],
-    ['06', 'plaza'],
-    ['12', 'sheo-r'],
+    ['03', 'world'],
+    ['04', 'dorms'],
+    ['05', 'admin'],
+    ['06', 'speech'],
+    ['08', 'library'],
+    ['13', 'sheo-s'],
     ['14', 'school-square'],
     ['17', 'auditorium'],
     ['18', 'track'],
     ['19', 'communication-c'],
+    ['11', 'management'],
   ]) {
     await page.click(`[data-lm="${num}"]`)
     await page.waitForTimeout(700)
     await shot(page, `04-${num}-${name}`)
   }
-  // 走到 C 棟入口觸發抵達提示
+  // 從傳播大廈東側階梯走向入口，觸發抵達提示
+  await page.evaluate(() => {
+    const { explorer } = window.__campus
+    explorer.teleport({ x: 276, z: -14 }, { x: 285, z: -7 })
+  })
   await page.keyboard.down('KeyW')
-  await step(page, 40)
+  await step(page, 50)
   await page.keyboard.up('KeyW')
   await page.waitForTimeout(600)
   const arrived = await page.$eval('.toast', el => el.classList.contains('is-open') && el.textContent)
@@ -132,7 +152,7 @@ try {
   await step(page, 120)
   await page.waitForTimeout(800)
   s = await state(page)
-  check(s.mode === 'tour' && s.z < 140, `tour walks the route (z=${s.z.toFixed(1)})`)
+  check(s.mode === 'tour' && Math.hypot(s.x + 241, s.z - 109.5) > 20, `tour walks the route (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`)
   await shot(page, '08-tour')
   await page.keyboard.press('KeyW')
   s = await state(page)
