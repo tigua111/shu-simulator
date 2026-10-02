@@ -137,8 +137,8 @@ export class Explorer {
       this.avatar.visible = true
       this.orbit.enabled = true
       // 總覽：框住前校門到傳播大廈的整個校園
-      const target = new THREE.Vector3(15, 18, 30)
-      this.startFly(new THREE.Vector3(target.x - 120, 430, target.z + 360), target, this.camera.position.clone(), this.walkLookTarget())
+      const target = new THREE.Vector3(-20, 24, -18)
+      this.startFly(new THREE.Vector3(target.x - 40, 250, target.z + 215), target, this.camera.position.clone(), this.walkLookTarget())
     } else {
       this.avatar.visible = false
       this.orbit.enabled = false

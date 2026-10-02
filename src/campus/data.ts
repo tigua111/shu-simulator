@@ -6,8 +6,9 @@
  */
 import { SITE } from './site'
 import type { AreaKind, BuildingStyle, P2, PathKind, SiteBuilding } from './siteTypes'
+import { APPEARANCE, type RoofKind } from './appearance'
 
-export type { BuildingStyle, PathKind, AreaKind }
+export type { BuildingStyle, PathKind, AreaKind, RoofKind }
 export type Vec2 = { x: number; z: number }
 
 const v = (p: P2): Vec2 => ({ x: p[0], z: p[1] })
@@ -24,6 +25,7 @@ export interface Building extends Omit<SiteBuilding, 'poly' | 'ground'> {
   ground: Vec2[][]
   c: Vec2
   box: Box
+  roof: RoofKind
 }
 export interface Neighbor {
   osm: number
@@ -74,7 +76,17 @@ export function centroid(pts: Vec2[]): Vec2 {
 
 export const BUILDINGS: Building[] = SITE.buildings.map(b => {
   const pts = b.poly.map(v)
-  return { ...b, pts, ground: b.ground ? b.ground.map(g => g.map(v)) : [pts], c: centroid(pts), box: polyBox(pts) }
+  const ap = APPEARANCE[b.id]
+  return {
+    ...b,
+    style: ap?.style ?? b.style,
+    h: ap?.h ?? b.h,
+    roof: ap?.roof ?? 'flat',
+    pts,
+    ground: b.ground ? b.ground.map(g => g.map(v)) : [pts],
+    c: centroid(pts),
+    box: polyBox(pts),
+  }
 })
 export const NEIGHBORS: Neighbor[] = SITE.neighbors.map(n => {
   const pts = n.poly.map(v)
@@ -110,8 +122,8 @@ export function buildingById(id: string): Building {
 
 // ─── 地面高程 ─────────────────────────────────────────
 const ELEV = SITE.elev
-/** 步行地面高程（公尺，海拔），依控制點反距離加權插值 */
-export function groundHeight(x: number, z: number): number {
+/** 依控制點反距離加權插值的原始高程 */
+function rawHeight(x: number, z: number): number {
   let ws = 0
   let hs = 0
   for (let i = 0; i < ELEV.length; i++) {
@@ -125,6 +137,39 @@ export function groundHeight(x: number, z: number): number {
     hs += w * e[2]
   }
   return hs / ws
+}
+
+/** 點到多邊形邊界的距離（內部回傳 0） */
+function polyDist(x: number, z: number, pts: Vec2[]): number {
+  let inside = false
+  let best = Infinity
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j]
+    const b = pts[i]
+    if (a.z > z !== b.z > z && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside
+    const dx = b.x - a.x
+    const dz = b.z - a.z
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz || 1)))
+    best = Math.min(best, Math.hypot(x - a.x - dx * t, z - a.z - dz * t))
+  }
+  return inside ? 0 : best
+}
+
+/** 操場（跑道＋網球場）為平整場地：範圍內固定高程，外圍 10 公尺平順銜接 */
+const SPORTS = AREAS.find(a => a.kind === 'sports')
+const SPORTS_BOX = SPORTS ? polyBox(SPORTS.pts) : null
+const SPORTS_Y = rawHeight(SITE.track.center[0], SITE.track.center[1])
+const FLAT_MARGIN = 10
+
+/** 步行地面高程（公尺，海拔） */
+export function groundHeight(x: number, z: number): number {
+  const h = rawHeight(x, z)
+  if (!SPORTS || !SPORTS_BOX) return h
+  if (x < SPORTS_BOX.x0 - FLAT_MARGIN || x > SPORTS_BOX.x1 + FLAT_MARGIN || z < SPORTS_BOX.z0 - FLAT_MARGIN || z > SPORTS_BOX.z1 + FLAT_MARGIN) return h
+  const d = polyDist(x, z, SPORTS.pts)
+  if (d >= FLAT_MARGIN) return h
+  const t = smoothstep(0, FLAT_MARGIN, d)
+  return SPORTS_Y * (1 - t) + h * t
 }
 
 export function smoothstep(edge0: number, edge1: number, x: number): number {

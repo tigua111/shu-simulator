@@ -9,6 +9,14 @@ export type BuildingStyle =
   | 'glass' // 玻璃帷幕（全媒體大樓）
   | 'concrete' // 灰色（智能攝製基地）
   | 'city' // 校外建物
+  | 'whiteBand' // 白灰色橫向帶窗（新聞大樓）
+  | 'whiteOffice' // 白色方窗（行政、圖書館、通識、宿舍）
+  | 'orangeLouver' // 白牆橘色直向百葉（女生第一宿舍）
+  | 'whiteArch' // 白色拱窗（傳播大廈）
+  | 'goldBox' // 金褐色金屬外牆（智能攝製基地）
+  | 'glassGreen' // 綠色玻璃帷幕（管院大樓）
+  | 'omTower' // 米灰色牆面＋深灰框（全媒體大樓）
+  | 'scaffold' // 施工鷹架
 
 export interface SiteBuilding {
   id: string

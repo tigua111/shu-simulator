@@ -105,10 +105,10 @@ export class Ui {
       <section class="modal" data-modal="sources" role="dialog" aria-label="參考來源與範圍">
         <div class="modal-card">
           <h2>參考來源與作品範圍</h2>
-          <p>本作是依公開資料製作的<strong>概念模型</strong>：建築位置依官方校園導覽圖的相對關係推估，量體、樓高與坡度皆為示意，<strong>非精密測繪，也不是正式路線指引</strong>。</p>
+          <p>本作是<strong>概念模型</strong>：建築輪廓與步道位置取自 OpenStreetMap 並以國土測繪中心正射影像核對，樓層數依世新官網；外牆顏色、屋頂（太陽能板、斜屋頂、玻璃天窗）、招牌與附屬構造依使用者提供的 2025-12、2026-10 校園空拍影片判讀。樓高與坡度為近似值，<strong>非精密測繪，也不是正式路線指引</strong>。</p>
           <p>範圍：前校門（01）經隧道、言論廣場（06）、舍我樓（12・13）、學校廣場（14）、大禮堂（17）與操場（18），到新聞傳播學院所在的傳播大廈 C 棟（19）；周邊建築以簡化量體呈現。</p>
           <ul>${SOURCES.map(s => `<li><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a></li>`).join('')}</ul>
-          <p class="note">照片僅作為造型與配色參考，場景中沒有使用任何照片貼圖；所有建築、材質與招牌皆以程式化幾何繪製。</p>
+          <p class="note">言論廣場南側（原廣電大樓 B 位置）依 2026-10 空拍呈現為施工中鷹架。照片與影片僅作為造型與配色參考，場景中沒有使用任何照片貼圖；所有建築、材質與招牌皆以程式化幾何繪製。</p>
           <button type="button" class="btn primary" data-close>關閉</button>
         </div>
       </section>`

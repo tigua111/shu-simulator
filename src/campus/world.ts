@@ -15,6 +15,7 @@ import {
   START,
   TRACK,
   TUNNEL,
+  buildingById,
   centroid,
   groundHeight,
   type AreaKind,
@@ -25,7 +26,7 @@ import {
 } from './data'
 import { LANDMARKS, type Landmark } from './landmarks'
 import { distToPolyline, insideSolid, isWalkable, onPaved, pathAt, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
-import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, signTexture, stoneTexture } from './textures'
+import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, fieldTexture, signTexture, solarTexture, stoneTexture } from './textures'
 
 /** 可重現的亂數 */
 function rng(seed: number): () => number {
@@ -186,7 +187,10 @@ function facadeMat(style: BuildingStyle, floorH: number, sink: number): THREE.Me
   const bay = style === 'auditorium' ? 6 : style === 'city' ? 5 : 4
   t.repeat.set(1 / bay, -1 / floorH)
   t.offset.set(0, (1 + sink) / floorH)
-  const m = new THREE.MeshLambertMaterial({ map: t })
+  const m =
+    style === 'scaffold'
+      ? new THREE.MeshLambertMaterial({ map: t, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide, depthWrite: false })
+      : new THREE.MeshLambertMaterial({ map: t })
   facadeMats.set(key, m)
   return m
 }
@@ -215,6 +219,12 @@ function faceToward(pts: Vec2[], target: Vec2): { mid: Vec2; n: Vec2; len: numbe
     }
   }
   return best
+}
+
+/** 多邊形朝質心縮放（屋頂設備、核心用） */
+function inset(pts: Vec2[], k: number): Vec2[] {
+  const c = centroid(pts)
+  return pts.map(p => ({ x: c.x + (p.x - c.x) * k, z: c.z + (p.z - c.z) * k }))
 }
 
 function baseOf(pts: Vec2[]): number {
@@ -256,6 +266,7 @@ export class CampusWorld {
     this.addNeighbors()
     this.addGateAndTunnel()
     this.addStage()
+    this.addCampusDetails()
     this.addBackGate()
     this.addStreetDressing()
     this.addTrees()
@@ -511,7 +522,10 @@ export class CampusWorld {
       ring(rr + 0.06, rr - 0.06, 0xf4efe8, 0.01)
     }
     const fieldShape = stadium(new THREE.Shape(), inner) as THREE.Shape
-    const fm = new THREE.Mesh(new THREE.ShapeGeometry(fieldShape, 24), new THREE.MeshLambertMaterial({ color: 0x4f9e4a }))
+    const ftex = fieldTexture(TRACK.len - TRACK.lane * 2, TRACK.w - TRACK.lane * 2)
+    ftex.repeat.set(1 / (TRACK.len - TRACK.lane * 2), 1 / (TRACK.w - TRACK.lane * 2))
+    ftex.offset.set(0.5, 0.5)
+    const fm = new THREE.Mesh(new THREE.ShapeGeometry(fieldShape, 24), new THREE.MeshLambertMaterial({ map: ftex }))
     fm.rotation.x = -Math.PI / 2
     fm.position.y = 0.005
     fm.receiveShadow = true
@@ -522,8 +536,9 @@ export class CampusWorld {
     // OSM 球場（綠色場地、網球場、東側小球場）
     const court = new THREE.MeshLambertMaterial({ map: courtTexture() })
     for (const a of AREAS) {
-      if (a.kind !== 'court' && a.kind !== 'field') continue
-      const yy = groundHeight(centroid(a.pts).x, centroid(a.pts).z) + (a.kind === 'field' ? 0.19 : 0.17)
+      // 內場改由跑道內的球場貼圖呈現（0037、0045 空拍：綠底多個藍色球場）
+      if (a.kind !== 'court') continue
+      const yy = groundHeight(centroid(a.pts).x, centroid(a.pts).z) + 0.17
       const m = this.flatPoly(a.pts, yy, a.kind === 'court' ? court : new THREE.MeshLambertMaterial({ color: 0x5aa850 }))
       if (a.kind === 'court') {
         const uv = m.geometry.attributes.uv as THREE.BufferAttribute
@@ -587,22 +602,87 @@ export class CampusWorld {
         g.add(m)
       }
     }
-    // 女兒牆
-    const [, parapet] = prism(b.pts, top, top + 1)
-    const pm = new THREE.Mesh(parapet, new THREE.MeshLambertMaterial({ color: new THREE.Color(STYLE_ROOF[b.style]).multiplyScalar(0.85), side: THREE.DoubleSide }))
-    g.add(pm)
-    // 屋頂設備
-    if (b.h > 10 && b.box.x1 - b.box.x0 > 14) {
-      const unit = new THREE.Mesh(new THREE.BoxGeometry(5, 2.4, 4), new THREE.MeshLambertMaterial({ color: 0xbdbdb8 }))
-      unit.position.set(b.c.x, top + 1.2, b.c.z)
-      unit.castShadow = true
-      if (pointInPolygon(b.c, b.pts)) g.add(unit)
+    if (b.style === 'scaffold') {
+      // 施工中：鷹架內的混凝土結構體
+      const [cc, cs] = prism(inset(b.pts, 0.82), base - SINK, top - 2.5)
+      const coreMat = new THREE.MeshLambertMaterial({ color: 0xb9b6ae })
+      g.add(new THREE.Mesh(cc, coreMat), new THREE.Mesh(cs, coreMat))
+    } else {
+      // 女兒牆
+      const [, parapet] = prism(b.pts, top, top + 1)
+      g.add(new THREE.Mesh(parapet, new THREE.MeshLambertMaterial({ color: new THREE.Color(STYLE_ROOF[b.style]).multiplyScalar(0.85), side: THREE.DoubleSide })))
+      this.addRoof(b, g, top)
     }
     // 輪廓線，方便總覽辨識
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.ExtrudeGeometry(shapeOf(b.pts), { depth: top - base, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, base, 0), 30), new THREE.LineBasicMaterial({ color: 0x5a4a42, transparent: true, opacity: 0.45 }))
     g.add(edges)
     this.addBuildingSigns(b, g, base, top)
     return g
+  }
+
+  /** 屋頂：太陽能板、斜屋頂、玻璃天窗或屋頂機房（依空拍影片） */
+  private addRoof(b: Building, g: THREE.Group, top: number): void {
+    const solarPlane = (pts: Vec2[], y: number) => {
+      const geo = new THREE.ShapeGeometry(shapeOf(pts))
+      geo.rotateX(-Math.PI / 2)
+      const tex = solarTexture()
+      tex.repeat.set(0.5, 1)
+      const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }))
+      m.position.y = y
+      m.receiveShadow = true
+      return m
+    }
+    switch (b.roof) {
+      case 'solar':
+        g.add(solarPlane(inset(b.pts, 0.82), top + 1.25))
+        break
+      case 'solarGreen': {
+        const base = new THREE.ShapeGeometry(shapeOf(inset(b.pts, 0.97)))
+        base.rotateX(-Math.PI / 2)
+        const gm = new THREE.Mesh(base, new THREE.MeshLambertMaterial({ color: 0x3fae6a }))
+        gm.position.y = top + 0.06
+        g.add(gm, solarPlane(inset(b.pts, 0.8), top + 0.5))
+        break
+      }
+      case 'hip': {
+        const metal = new THREE.MeshLambertMaterial({ color: 0x8e979e })
+        const steps: [number, number, number][] = [
+          [0.9, 0, 1.4],
+          [0.72, 1.4, 2.6],
+          [0.5, 2.6, 3.4],
+        ]
+        for (const [k, y0, y1] of steps) {
+          const [cap, side] = prism(inset(b.pts, k), top + y0, top + y1)
+          const a = new THREE.Mesh(cap, metal)
+          const c = new THREE.Mesh(side, metal)
+          a.castShadow = c.castShadow = true
+          g.add(a, c)
+        }
+        break
+      }
+      case 'atrium': {
+        const glass = new THREE.MeshLambertMaterial({ color: 0x6fc3a8, transparent: true, opacity: 0.85 })
+        const [cap, side] = prism(inset(b.pts, 0.62), top, top + 3.2)
+        g.add(new THREE.Mesh(cap, glass), new THREE.Mesh(side, glass))
+        break
+      }
+      case 'metal': {
+        const mat = new THREE.MeshLambertMaterial({ color: 0xb8bdc1 })
+        const [cap, side] = prism(inset(b.pts, 0.82), top, top + 3.8)
+        const a = new THREE.Mesh(cap, mat)
+        const c = new THREE.Mesh(side, mat)
+        a.castShadow = c.castShadow = true
+        g.add(a, c)
+        break
+      }
+      default:
+        if (b.h > 10 && b.box.x1 - b.box.x0 > 14 && pointInPolygon(b.c, b.pts)) {
+          const unit = new THREE.Mesh(new THREE.BoxGeometry(5, 2.4, 4), new THREE.MeshLambertMaterial({ color: 0xbdbdb8 }))
+          unit.position.set(b.c.x, top + 1.2, b.c.z)
+          unit.castShadow = true
+          g.add(unit)
+        }
+    }
   }
 
   private signPlane(tex: THREE.Texture, w: number, h: number): THREE.Mesh {
@@ -620,37 +700,84 @@ export class CampusWorld {
 
   private addBuildingSigns(b: Building, g: THREE.Group, base: number, top: number): void {
     const gate = START.pos
+    const plaza = centroid(AREAS.find(a => a.id === 'school-plaza')!.pts)
+    const speech = centroid(AREAS.find(a => a.id === 'speech')!.pts)
+    const track = { x: TRACK.x, z: TRACK.z }
+    const vertical = (text: string, color: string, bg: string, w: number, h: number) =>
+      this.signPlane(signTexture(text, { color, bg, vertical: true, w: 256, h: Math.round((256 * h) / w), size: 180 }), w, h)
     switch (b.id) {
-      case 'W':
-        this.placeOnFace(g, b, gate, this.signPlane(signTexture('世新大學', { color: '#b3202f', bg: '#f1ece6' }), 14, 3.5), top - 2.5)
+      case 'W': {
+        // 0034：屋頂「世新大學」白底紅字大招牌，面向木柵路（南）
+        const f = faceToward(b.pts, { x: b.c.x + 10, z: b.c.z + 120 })
+        const bb = new THREE.Group()
+        const back = new THREE.Mesh(new THREE.BoxGeometry(17.4, 5, 0.3), new THREE.MeshLambertMaterial({ color: 0xe6e3dd }))
+        back.position.set(0, 4.5, -0.2)
+        const panel = this.signPlane(signTexture('世新大學', { color: '#c0182b', bg: '#fbfaf7' }), 17, 4.6)
+        panel.position.set(0, 4.5, 0)
+        bb.add(back, panel)
+        for (const sx of [-6, 0, 6]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.2, 0.3), new THREE.MeshLambertMaterial({ color: 0x777777 }))
+          post.position.set(sx, 1.1, -0.4)
+          bb.add(post)
+        }
+        bb.position.set(f.mid.x - f.n.x * 4, top, f.mid.z - f.n.z * 4)
+        bb.rotation.y = f.yaw
+        bb.traverse(o => (o.castShadow = true))
+        g.add(bb)
         break
+      }
       case 'J':
-        this.placeOnFace(g, b, gate, this.signPlane(signTexture('新聞大樓', { color: '#b3202f', bg: '#f4e2da' }), 9, 2.25), top - 3)
+        this.placeOnFace(g, b, gate, vertical('新聞大樓', '#ffffff', '#5b2f78', 2.2, 9), base + 9, 12)
+        break
+      case 'ADM':
+        this.placeOnFace(g, b, speech, this.signPlane(signTexture('行政大樓', { color: '#b3202f' }), 7, 1.75), top - 2.5)
+        break
+      case 'G':
+        this.placeOnFace(g, b, speech, this.signPlane(signTexture('通識大樓', { color: '#555b62', sub: 'General Studies Building' }), 7, 1.75), top - 2.5)
+        break
+      case 'L':
+        this.placeOnFace(g, b, speech, this.signPlane(signTexture('圖書館', { color: '#c0182b', bg: '#f6f4ef' }), 8, 2), top - 3)
         break
       case 'C':
         this.placeOnFace(g, b, DESTINATION, this.signPlane(signTexture('傳播大廈', { color: '#a3122b', bg: '#f7f3ec', sub: 'COLLEGE OF JOURNALISM & COMMUNICATIONS' }), 11, 2.75), base + 8)
+        this.placeOnFace(g, b, track, vertical('世新大學', '#ffffff', '#a3122b', 2.6, 11), base + 12, 4)
         break
-      case 'A': {
-        const plaza = AREAS.find(a => a.id === 'school-plaza')!
-        this.placeOnFace(g, b, centroid(plaza.pts), this.signPlane(signTexture('大禮堂', { color: '#b3202f', bg: '#f2f0ea' }), 9, 2.25), top - 4)
+      case 'A':
+        this.placeOnFace(g, b, plaza, this.signPlane(signTexture('大禮堂', { color: '#b3202f', bg: '#f2f0ea' }), 6, 1.5), base + 7.6)
+        this.placeOnFace(g, b, plaza, vertical('世新我的驕傲', '#ffd84a', '#283a73', 2.4, 12), base + 13, -6)
         break
-      }
-      case 'S': {
-        const plaza = AREAS.find(a => a.id === 'school-plaza')!
-        this.placeOnFace(g, b, centroid(plaza.pts), this.signPlane(signTexture('舍我樓', { color: '#ffffff', vertical: true, w: 256, h: 768, size: 210 }), 2.4, 7.2), top - 8)
+      case 'S':
+        this.placeOnFace(g, b, plaza, this.signPlane(signTexture('舍我樓', { color: '#ffffff', vertical: true, w: 256, h: 768, size: 210 }), 2.4, 7.2), top - 8)
         break
-      }
-      case 'L': {
-        const sp = AREAS.find(a => a.id === 'speech')!
-        this.placeOnFace(g, b, centroid(sp.pts), this.signPlane(signTexture('圖書館', { color: '#6b4a3a', bg: '#f1ede6' }), 8, 2), top - 3)
-        break
-      }
       case 'M':
-        this.placeOnFace(g, b, { x: b.c.x, z: b.c.z + 60 }, this.signPlane(signTexture('管理學院', { color: '#b3202f' }), 12, 3), top - 3)
+        this.placeOnFace(g, b, { x: b.c.x, z: b.c.z + 60 }, this.signPlane(signTexture('世新大學管理學院', { color: '#b3202f', bg: '#ffffff' }), 10, 1.4), base + 3)
         break
-      case 'OM':
-        this.placeOnFace(g, b, { x: b.c.x - 40, z: b.c.z }, this.signPlane(signTexture('全媒體大樓', { color: '#ffffff', bg: '#35506a' }), 9, 2.25), top - 3)
+      case 'OM': {
+        // 0045：西面巨幅藍色海報
+        const c = document.createElement('canvas')
+        c.width = 256
+        c.height = 768
+        const x = c.getContext('2d')!
+        const gr = x.createLinearGradient(0, 0, 0, 768)
+        gr.addColorStop(0, '#5fc4e8')
+        gr.addColorStop(1, '#173a78')
+        x.fillStyle = gr
+        x.fillRect(0, 0, 256, 768)
+        x.fillStyle = 'rgba(20,30,50,0.85)'
+        x.fillRect(104, 190, 48, 250)
+        x.beginPath()
+        x.arc(128, 170, 30, 0, Math.PI * 2)
+        x.fill()
+        x.fillStyle = '#ffffff'
+        x.font = '700 60px "Noto Sans TC",sans-serif'
+        x.textAlign = 'center'
+        x.fillText('全媒體', 128, 560)
+        x.fillText('大樓', 128, 636)
+        const tex = new THREE.CanvasTexture(c)
+        tex.colorSpace = THREE.SRGBColorSpace
+        this.placeOnFace(g, b, { x: b.c.x - 60, z: b.c.z }, this.signPlane(tex, 7, 21), base + 15)
         break
+      }
     }
   }
 
@@ -687,6 +814,7 @@ export class CampusWorld {
     const stoneMat = new THREE.MeshLambertMaterial({ map: stone })
     const trim = new THREE.MeshLambertMaterial({ color: 0xc89580 })
 
+    const whiteMat = new THREE.MeshLambertMaterial({ color: 0xf2efe8 })
     const makePortal = (at: Vec2, facingYaw: number, withSign: boolean) => {
       const gate = new THREE.Group()
       const shape = new THREE.Shape()
@@ -699,7 +827,8 @@ export class CampusWorld {
       shape.lineTo(8, 11)
       shape.lineTo(-8, 11)
       shape.closePath()
-      const arch = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false, curveSegments: 20 }), stoneMat)
+      // 外口為粉色石拱；隧道內口（0042 空拍）為覆滿藤蔓的白色拱
+      const arch = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false, curveSegments: 20 }), withSign ? stoneMat : whiteMat)
       arch.position.z = -3
       arch.castShadow = arch.receiveShadow = true
       arch.userData.num = '01'
@@ -790,8 +919,9 @@ export class CampusWorld {
     deck.position.set(STAGE.x, y + 0.5, STAGE.z)
     deck.castShadow = deck.receiveShadow = true
     this.scene.add(deck)
-    const roof = new THREE.Mesh(new THREE.SphereGeometry(STAGE.r + 0.8, 32, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xf1efe9, side: THREE.DoubleSide }))
-    roof.scale.y = 0.35
+    // 0037 空拍：白色橢圓膜頂
+    const roof = new THREE.Mesh(new THREE.SphereGeometry(STAGE.r + 1.6, 40, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xf7f6f2, side: THREE.DoubleSide }))
+    roof.scale.set(1.45, 0.16, 0.95)
     roof.position.set(STAGE.x, y + 6.2, STAGE.z)
     roof.castShadow = true
     this.scene.add(roof)
@@ -802,6 +932,198 @@ export class CampusWorld {
       this.scene.add(post)
     }
     this.obstacles.push({ x: STAGE.x, z: STAGE.z, r: STAGE.r })
+  }
+
+  // ─── 依空拍影片補上的附屬構造 ──────────────────────────
+  private addCampusDetails(): void {
+    const scene = this.scene
+    const at = (x: number, z: number) => groundHeight(x, z)
+
+    // 舍我樓圓柱樓梯塔（0034_124、0037_117）：粉米色、白色橫帶；嵌入牆面，只做外觀
+    const bandTex = (() => {
+      const c = document.createElement('canvas')
+      c.width = 64
+      c.height = 128
+      const x = c.getContext('2d')!
+      x.fillStyle = '#dcae98'
+      x.fillRect(0, 0, 64, 128)
+      x.fillStyle = '#f6efe8'
+      x.fillRect(0, 0, 64, 8)
+      x.fillRect(0, 14, 64, 4)
+      const t = new THREE.CanvasTexture(c)
+      t.colorSpace = THREE.SRGBColorSpace
+      t.wrapS = t.wrapT = THREE.RepeatWrapping
+      return t
+    })()
+    const R = buildingById('R')
+    const S = buildingById('S')
+    const cyl = (x: number, z: number, r: number, h: number, sign?: string) => {
+      const y0 = at(x, z) - 1
+      const t = bandTex.clone()
+      t.needsUpdate = true
+      t.repeat.set(4, h / FLOOR_H)
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 28), new THREE.MeshLambertMaterial({ map: t }))
+      m.position.set(x, y0 + h / 2, z)
+      m.castShadow = m.receiveShadow = true
+      this.occluders.push(m)
+      scene.add(m)
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.25, r + 0.25, 0.6, 28), new THREE.MeshLambertMaterial({ color: 0xf2ece4 }))
+      cap.position.set(x, y0 + h + 0.3, z)
+      scene.add(cap)
+      if (sign) {
+        // 面向南側步道的「舍我樓 She-Wo Building」字樣
+        const p = this.signPlane(signTexture('舍我樓', { color: '#2a2a2a', vertical: true, w: 256, h: 640, size: 180 }), 2.6, 6.5)
+        p.position.set(x, y0 + h - 7, z + r + 0.05)
+        scene.add(p)
+        const en = this.signPlane(signTexture('She-Wo Building', { color: '#2a2a2a', size: 110 }), 4.4, 1.1)
+        en.position.set(x, y0 + h - 11.4, z + r + 0.05)
+        scene.add(en)
+      }
+    }
+    cyl(R.box.x0 + 1.2, (R.box.z0 + R.box.z1) / 2, 3.6, R.h + 2)
+    cyl(-4, -20, 3.9, S.h - 2, 'sign')
+
+    // 八方廣場旁的紅橘色四層小塔，頂部尖頂（0034_72、0042_144）
+    {
+      const x = -100
+      const z = -14
+      const y = at(x, z)
+      const g = new THREE.Group()
+      const body = new THREE.Mesh(new THREE.BoxGeometry(4, 13, 4), new THREE.MeshLambertMaterial({ color: 0xc9573a }))
+      body.position.y = 6.5
+      const win = new THREE.MeshLambertMaterial({ color: 0x4d6b5a })
+      for (let k = 0; k < 4; k++) {
+        const w = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 4.1), win)
+        w.position.y = 2.4 + k * 3
+        g.add(w)
+      }
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 2.6, 4), new THREE.MeshLambertMaterial({ color: 0xb8242f }))
+      roof.position.y = 14.3
+      roof.rotation.y = Math.PI / 4
+      g.add(body, roof)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(x, y, z)
+      g.rotation.y = 0.55
+      this.occluders.push(body)
+      scene.add(g)
+      this.obstacles.push({ x, z, r: 2.8 })
+    }
+
+    // 山坡上的紅色八角涼亭（0034_95、0034_124）
+    {
+      const x = -30
+      const z = 12
+      const y = terrainHeight(x, z)
+      const g = new THREE.Group()
+      const red = new THREE.MeshLambertMaterial({ color: 0xb8242f })
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2
+        const p = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 3), red)
+        p.position.set(Math.cos(a) * 2.6, 1.5, Math.sin(a) * 2.6)
+        g.add(p)
+      }
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(4, 2.2, 8), new THREE.MeshLambertMaterial({ color: 0xd2753d }))
+      roof.position.y = 4.1
+      const floor = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.4, 0.6, 8), new THREE.MeshLambertMaterial({ color: 0xd8d2c6 }))
+      floor.position.y = 0.1
+      g.add(roof, floor)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(x, y, z)
+      scene.add(g)
+    }
+
+    // 通識大樓面向言論廣場的圓形雨遮（0042_144）
+    {
+      const G = buildingById('G')
+      const sp = centroid(AREAS.find(a => a.id === 'speech')!.pts)
+      const f = faceToward(G.pts, sp)
+      const y = at(f.mid.x, f.mid.z)
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, 0.5, 40, 1, false, 0, Math.PI), new THREE.MeshLambertMaterial({ color: 0xe7e5e0 }))
+      disc.position.set(f.mid.x, y + 4.6, f.mid.z)
+      disc.rotation.y = f.yaw - Math.PI / 2
+      disc.castShadow = true
+      scene.add(disc)
+      for (const a of [0.35, 1.0, 1.65, 2.3, 2.8]) {
+        const lx = Math.cos(a) * 7
+        const lz = Math.sin(a) * 7
+        const ang = f.yaw - Math.PI / 2
+        const px = f.mid.x + lx * Math.cos(ang) + lz * Math.sin(ang)
+        const pz = f.mid.z - lx * Math.sin(ang) + lz * Math.cos(ang)
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 4.6), new THREE.MeshLambertMaterial({ color: 0x9aa0a6 }))
+        post.position.set(px, y + 2.3, pz)
+        scene.add(post)
+      }
+    }
+
+    // 女一舍面向隧道坡道的綠色頂棚樓梯（0042_164）
+    {
+      const D2 = buildingById('D2')
+      const tunnelExit = TUNNEL.pts[TUNNEL.pts.length - 1]
+      const f = faceToward(D2.pts, tunnelExit)
+      const len = Math.min(f.len, 22)
+      const cx = f.mid.x + f.n.x * 2.6
+      const cz = f.mid.z + f.n.z * 2.6
+      const y = at(cx, cz)
+      const g = new THREE.Group()
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(len, 0.25, 4), new THREE.MeshLambertMaterial({ color: 0x3fae55 }))
+      roof.position.y = 4.2
+      roof.rotation.z = 0.12
+      g.add(roof)
+      for (const s of [-0.45, 0, 0.45]) {
+        for (const d of [-1.7, 1.7]) {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 4.2), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }))
+          post.position.set(s * len, 2.1 + s * len * 0.12, d)
+          g.add(post)
+        }
+      }
+      g.position.set(cx, y, cz)
+      g.rotation.y = f.yaw + Math.PI / 2
+      g.traverse(o => (o.castShadow = true))
+      scene.add(g)
+    }
+
+    // 新聞大樓臨木柵路的白色斜坡格柵牆（0034_26）
+    {
+      const J = buildingById('J')
+      const f = faceToward(J.pts, { x: J.c.x, z: J.c.z + 100 })
+      const len = Math.min(f.len, 40)
+      const tex = (() => {
+        const c = document.createElement('canvas')
+        c.width = 256
+        c.height = 64
+        const x = c.getContext('2d')!
+        x.fillStyle = '#f4f4f1'
+        x.fillRect(0, 0, 256, 64)
+        x.fillStyle = '#c9cbcb'
+        for (let i = 0; i < 64; i += 8) x.fillRect(0, i, 256, 3)
+        const t = new THREE.CanvasTexture(c)
+        t.colorSpace = THREE.SRGBColorSpace
+        return t
+      })()
+      const geo = new THREE.PlaneGeometry(len, 7.5)
+      const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide }))
+      const y = baseOf(J.pts)
+      m.position.set(f.mid.x + f.n.x * 2.6, y + 2.6, f.mid.z + f.n.z * 2.6)
+      m.rotation.set(0, f.yaw, 0)
+      m.rotateX(-0.75)
+      m.receiveShadow = true
+      scene.add(m)
+    }
+
+    // 地形範圍外的市區地面，避免道路懸空、邊緣露出背景
+    {
+      let min = Infinity
+      for (let i = 0; i <= 20; i++) {
+        for (let j = 0; j <= 20; j++) {
+          min = Math.min(min, groundHeight(BOUNDS.minX + ((BOUNDS.maxX - BOUNDS.minX) * i) / 20, BOUNDS.minZ + ((BOUNDS.maxZ - BOUNDS.minZ) * j) / 20))
+        }
+      }
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(3200, 3200), new THREE.MeshLambertMaterial({ color: 0xb3ada4 }))
+      plane.rotation.x = -Math.PI / 2
+      plane.position.set((BOUNDS.minX + BOUNDS.maxX) / 2, min - 1.2, (BOUNDS.minZ + BOUNDS.maxZ) / 2)
+      plane.receiveShadow = true
+      scene.add(plane)
+    }
   }
 
   private addBackGate(): void {
