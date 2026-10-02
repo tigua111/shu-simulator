@@ -25,7 +25,8 @@ import {
   type Vec2,
 } from './data'
 import { LANDMARKS, type Landmark } from './landmarks'
-import { distToPolyline, insideSolid, isWalkable, onPaved, pathAt, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
+import { CANOPY } from './canopy'
+import { distToPolyline, distToSegment, insideSolid, isWalkable, onPaved, pathAt, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
 import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, fieldTexture, signTexture, solarTexture, stoneTexture } from './textures'
 
 /** 可重現的亂數 */
@@ -53,6 +54,58 @@ interface Field {
 }
 let FIELD: Field | null = null
 
+// ─── 樹冠遮罩（正射影像判讀） ───────────────────────────────
+const CANOPY_BITS = (() => {
+  const raw = atob(CANOPY.bits)
+  const a = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) a[i] = raw.charCodeAt(i)
+  return a
+})()
+/** 該點在航照上是否為樹冠 */
+export function canopyAt(x: number, z: number): boolean {
+  const i = Math.round((x - CANOPY.minX) / CANOPY.step)
+  const j = Math.round((z - CANOPY.minZ) / CANOPY.step)
+  if (i < 0 || j < 0 || i >= CANOPY.nx || j >= CANOPY.nz) return false
+  const k = j * CANOPY.nx + i
+  return ((CANOPY_BITS[k >> 3] >> (7 - (k & 7))) & 1) === 1
+}
+
+// ─── 前校門座向：正面平行木柵路（隧道本身斜向東北） ───────────────
+export const GATE_FRAME = (() => {
+  const a = TUNNEL.pts[0]
+  const b = TUNNEL.pts[TUNNEL.pts.length - 1]
+  const len = Math.hypot(b.x - a.x, b.z - a.z)
+  const dir = { x: (b.x - a.x) / len, z: (b.z - a.z) / len }
+  let best = Infinity
+  let tan = { x: 1, z: 0 }
+  for (const p of PATHS) {
+    if (p.kind !== 'road') continue
+    for (let i = 1; i < p.pts.length; i++) {
+      const d = distToSegment(a, p.pts[i - 1], p.pts[i])
+      if (d < best) {
+        best = d
+        const l = Math.hypot(p.pts[i].x - p.pts[i - 1].x, p.pts[i].z - p.pts[i - 1].z) || 1
+        tan = { x: (p.pts[i].x - p.pts[i - 1].x) / l, z: (p.pts[i].z - p.pts[i - 1].z) / l }
+      }
+    }
+  }
+  let nIn = { x: -tan.z, z: tan.x }
+  if (nIn.x * dir.x + nIn.z * dir.z < 0) nIn = { x: -nIn.x, z: -nIn.z }
+  const cos = nIn.x * dir.x + nIn.z * dir.z
+  // 斜交的隧道穿過校門立面時所需的半開口寬
+  const halfOpen = TUNNEL.w / 2 / Math.max(0.5, cos) + 0.5
+  return { a, dir, nIn, tan: { x: nIn.z, z: -nIn.x }, cos, halfOpen }
+})()
+/** 點相對前校門立面的深度（正值＝門內、負值＝木柵路側） */
+function gateDepth(p: Vec2): number {
+  return (p.x - GATE_FRAME.a.x) * GATE_FRAME.nIn.x + (p.z - GATE_FRAME.a.z) * GATE_FRAME.nIn.z
+}
+const GATE_CLEAR_R = 30
+
+function smooth01(t: number): number {
+  const c = Math.max(0, Math.min(1, t))
+  return c * c * (3 - 2 * c)
+}
 function tunnelParam(p: Vec2): { d: number; t: number } {
   const a = TUNNEL.pts[0]
   const b = TUNNEL.pts[TUNNEL.pts.length - 1]
@@ -116,7 +169,15 @@ function buildField(): Field {
       let h = 34 * (1 - Math.exp(-dist[k] / 48))
       const p = { x: BOUNDS.minX + i * GRID, z: BOUNDS.minZ + j * GRID }
       const tp = tunnelParam(p)
-      if (tp.d < TUNNEL.w / 2 + 4 && tp.t > 0.015 && tp.t < 0.985) h = Math.max(h, 10)
+      const sd = gateDepth(p)
+      // 校門前（木柵路側）清空：不長山坡與樹；門後山坡平順升起，清空區外緣平順銜接
+      const rg = Math.hypot(p.x - GATE_FRAME.a.x, p.z - GATE_FRAME.a.z)
+      if (rg < GATE_CLEAR_R) {
+        const keep = smooth01((rg - (GATE_CLEAR_R - 10)) / 10)
+        const sdF = sd < 0.5 ? 0 : smooth01((sd - 0.5) / 6)
+        h *= keep + (1 - keep) * sdF
+      }
+      if (tp.d < TUNNEL.w / 2 + 4 && sd > 1 && tp.t > -0.3 && tp.t < 0.985) h = Math.max(h, 10)
       hill[k] = h
     }
   return { nx, nz, hill, paved }
@@ -360,8 +421,12 @@ export class CampusWorld {
       const jitter = (r() - 0.5) * 0.06
       const p = { x, z }
       let set = false
-      if (hill > 0.5) {
+      const tree = canopyAt(x, z) && !onPaved(p)
+      if (tree) {
         c.copy(forest).offsetHSL(jitter * 0.5, 0, jitter)
+        set = true
+      } else if (hill > 0.5) {
+        c.copy(lawn).offsetHSL(jitter * 0.4, -0.05, jitter - 0.04)
         set = true
       } else {
         for (const kind of areaOrder) {
@@ -383,6 +448,26 @@ export class CampusWorld {
       colors[k * 3 + 2] = c.b
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    // 隧道兩端：地形由 0 升到隧道上方山坡的過渡三角面會穿進拱門開口，挖掉
+    {
+      const idx = geo.index!
+      const keep: number[] = []
+      const half = TUNNEL.w / 2
+      for (let t = 0; t < idx.count; t += 3) {
+        const i0 = idx.getX(t)
+        const i1 = idx.getX(t + 1)
+        const i2 = idx.getX(t + 2)
+        const cx = (pos.getX(i0) + pos.getX(i1) + pos.getX(i2)) / 3
+        const cz = (pos.getZ(i0) + pos.getZ(i1) + pos.getZ(i2)) / 3
+        const tp = tunnelParam({ x: cx, z: cz })
+        const sd = gateDepth({ x: cx, z: cz })
+        const front = tp.d < GATE_FRAME.halfOpen + 1.2 && sd > -0.2 && sd < 5
+        const back = tp.d < half + 1.5 && tp.t > 0.94 && tp.t < 1.04
+        if (front || back) continue
+        keep.push(i0, i1, i2)
+      }
+      geo.setIndex(keep)
+    }
     geo.computeVertexNormals()
     const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }))
     ground.receiveShadow = true
@@ -815,100 +900,150 @@ export class CampusWorld {
     const trim = new THREE.MeshLambertMaterial({ color: 0xc89580 })
 
     const whiteMat = new THREE.MeshLambertMaterial({ color: 0xf2efe8 })
-    const makePortal = (at: Vec2, facingYaw: number, withSign: boolean) => {
+    const makePortal = (at: Vec2, facingYaw: number, withSign: boolean, ho: number, depth: number) => {
       const gate = new THREE.Group()
+      const W = ho + 3.5
+      const H = 4.6 + ho + 2.4
       const shape = new THREE.Shape()
-      shape.moveTo(-8, 0)
-      shape.lineTo(-half, 0)
-      shape.lineTo(-half, 4.6)
-      shape.absarc(0, 4.6, half, Math.PI, 0, true)
-      shape.lineTo(half, 0)
-      shape.lineTo(8, 0)
-      shape.lineTo(8, 11)
-      shape.lineTo(-8, 11)
+      shape.moveTo(-W, 0)
+      shape.lineTo(-ho, 0)
+      shape.lineTo(-ho, 4.6)
+      shape.absarc(0, 4.6, ho, Math.PI, 0, true)
+      shape.lineTo(ho, 0)
+      shape.lineTo(W, 0)
+      shape.lineTo(W, H)
+      shape.lineTo(-W, H)
       shape.closePath()
       // 外口為粉色石拱；隧道內口（0042 空拍）為覆滿藤蔓的白色拱
-      const arch = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false, curveSegments: 20 }), withSign ? stoneMat : whiteMat)
-      arch.position.z = -3
+      const arch = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 24 }), withSign ? stoneMat : whiteMat)
+      arch.position.z = -depth
       arch.castShadow = arch.receiveShadow = true
       arch.userData.num = '01'
       this.occluders.push(arch)
       gate.add(arch)
       const ringShape = new THREE.Shape()
-      ringShape.absarc(0, 4.6, half + 0.8, 0, Math.PI, false)
-      ringShape.lineTo(-half, 4.6)
-      ringShape.absarc(0, 4.6, half, Math.PI, 0, true)
+      ringShape.absarc(0, 4.6, ho + 0.8, 0, Math.PI, false)
+      ringShape.lineTo(-ho, 4.6)
+      ringShape.absarc(0, 4.6, ho, Math.PI, 0, true)
       ringShape.closePath()
-      const ring = new THREE.Mesh(new THREE.ExtrudeGeometry(ringShape, { depth: 0.3, bevelEnabled: false, curveSegments: 20 }), trim)
+      const ring = new THREE.Mesh(new THREE.ExtrudeGeometry(ringShape, { depth: 0.3, bevelEnabled: false, curveSegments: 24 }), trim)
       ring.position.z = 0.01
       gate.add(ring)
-      const cornice = new THREE.Mesh(new THREE.BoxGeometry(17.4, 1.2, 4.2), trim)
-      cornice.position.set(0, 11.6, -1.5)
+      const cornice = new THREE.Mesh(new THREE.BoxGeometry(2 * W + 1.4, 1.2, depth + 1.2), trim)
+      cornice.position.set(0, H + 0.6, -depth / 2 + 0.3)
       cornice.castShadow = true
       gate.add(cornice)
       if (withSign) {
         for (const s of [-1, 1]) {
           const wing = new THREE.Mesh(new THREE.BoxGeometry(6.5, 7.5, 2.6), stoneMat)
-          wing.position.set(s * 11, 3.75, -1.6)
+          wing.position.set(s * (W + 3.25), 3.75, -1.6)
           wing.castShadow = true
           gate.add(wing)
           const wingTop = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.9, 3.4), trim)
-          wingTop.position.set(s * 11.2, 7.9, -1.4)
+          wingTop.position.set(s * (W + 3.45), 7.9, -1.4)
           gate.add(wingTop)
-          const pilaster = new THREE.Mesh(new THREE.BoxGeometry(1.4, 10.4, 0.5), trim)
-          pilaster.position.set(s * 6.6, 5.2, 0.2)
+          const pilaster = new THREE.Mesh(new THREE.BoxGeometry(1.4, H - 0.6, 0.5), trim)
+          pilaster.position.set(s * (ho + 1.6), (H - 0.6) / 2, 0.2)
           gate.add(pilaster)
         }
-        const sign = this.signPlane(signTexture('世新大學', { color: '#8a5a3c', sub: 'Shih Hsin University' }), 7.5, 1.9)
-        sign.position.set(0, 9.3, 0.02)
+        const sign = this.signPlane(signTexture('世新大學', { color: '#8a5a3c', sub: 'Shih Hsin University' }), 8.5, 2.15)
+        sign.position.set(0, H - 1.5, 0.02)
         gate.add(sign)
-        const led = this.signPlane(signTexture('歡迎蒞臨世新大學', { color: '#ff4b3a', bg: '#1a1a1a', size: 120 }), 3.2, 0.5)
-        led.position.set(0, 6.2, -1)
+        const led = this.signPlane(signTexture('歡迎蒞臨世新大學', { color: '#ff4b3a', bg: '#1a1a1a', size: 120 }), 3.6, 0.56)
+        led.position.set(0, 4.6 + ho * 0.72, -0.6)
         gate.add(led)
       }
       gate.position.set(at.x, groundHeight(at.x, at.z), at.z)
       gate.rotation.y = facingYaw
       this.scene.add(gate)
     }
-    // 前校門：拱門正面朝向木柵路（與隧道前進方向相反）
-    makePortal(a, yaw, true)
-    makePortal(b, yaw + Math.PI, false)
+    // 前校門：拱門正面平行木柵路（與新聞大樓、世界大廈立面同向），隧道斜向穿過門體
+    const G = GATE_FRAME
+    const frontYaw = Math.atan2(-G.nIn.x, -G.nIn.z)
+    const GATE_DEPTH = 5.5
+    makePortal(a, frontYaw, true, G.halfOpen, GATE_DEPTH)
+    makePortal(b, yaw + Math.PI, false, half, 3)
+    // 門體內地板（地形在此挖空）
+    {
+      const fw = 2 * (G.halfOpen + 1.4)
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(fw, 5.7), new THREE.MeshLambertMaterial({ color: 0x5d5e62 }))
+      floor.rotation.set(-Math.PI / 2, 0, 0)
+      const holder = new THREE.Group()
+      holder.add(floor)
+      floor.position.set(0, 0, -5.7 / 2 + 0.2)
+      holder.position.set(a.x, groundHeight(a.x, a.z) + 0.04, a.z)
+      holder.rotation.y = frontYaw
+      floor.receiveShadow = true
+      this.scene.add(holder)
+      const bf = new THREE.Mesh(new THREE.PlaneGeometry(2 * (half + 1.6), 7), new THREE.MeshLambertMaterial({ color: 0x5d5e62 }))
+      bf.rotation.x = -Math.PI / 2
+      const bh = new THREE.Group()
+      bh.add(bf)
+      bf.position.set(0, 0, 0)
+      const bc = { x: b.x - dir.x * 2, z: b.z - dir.z * 2 }
+      bh.position.set(bc.x, groundHeight(bc.x, bc.z) + 0.04, bc.z)
+      bh.rotation.y = yaw
+      this.scene.add(bh)
+    }
+    // 隧道側牆／拱頂：斜交處只從校門立面後方開始，避免穿出門外
+    const xAxis = { x: Math.cos(yaw), z: -Math.sin(yaw) }
+    const startFor = (off: number) => {
+      let st = 0
+      for (const sd of [-1, 1]) {
+        const p = { x: a.x + xAxis.x * sd * off, z: a.z + xAxis.z * sd * off }
+        st = Math.max(st, -gateDepth(p) / Math.max(0.5, G.cos))
+      }
+      return st
+    }
+    const sideStart = (sd: number, off: number) => {
+      const p = { x: a.x + xAxis.x * sd * off, z: a.z + xAxis.z * sd * off }
+      return Math.max(0, -gateDepth(p) / Math.max(0.5, G.cos)) + 0.1
+    }
+    const vaultStart = startFor(half + 0.8) + 0.1
 
     // 隧道拱頂與側牆
     const segLen = 4
     const n = Math.ceil(len / segLen)
     const wallMat = new THREE.MeshLambertMaterial({ color: 0xe9e4da, side: THREE.DoubleSide })
-    const brickMat = new THREE.MeshLambertMaterial({ map: facadeTexture('brick') })
     const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff1c9 })
     const vault = new THREE.Shape()
     vault.absarc(0, 0, half + 0.8, 0, Math.PI, false)
     vault.lineTo(-half, 0)
     vault.absarc(0, 0, half, Math.PI, 0, true)
     vault.closePath()
-    const vaultGeo = new THREE.ExtrudeGeometry(vault, { depth: segLen + 0.05, bevelEnabled: false, curveSegments: 16 })
-    vaultGeo.translate(0, 0, -(segLen + 0.05) / 2)
     for (let i = 0; i < n; i++) {
-      const s = (i + 0.5) * (len / n)
-      const c = { x: a.x + dir.x * s, z: a.z + dir.z * s }
-      const y = groundHeight(c.x, c.z)
-      const seg = new THREE.Group()
-      const v = new THREE.Mesh(vaultGeo, wallMat)
-      v.position.y = 4.6
-      v.receiveShadow = true
-      seg.add(v)
+      const s0 = (i * len) / n
+      const s1 = ((i + 1) * len) / n
+      const seg = (from: number, to: number, build: (g: THREE.Group, l: number) => void) => {
+        if (to - from < 0.05) return
+        const sm = (from + to) / 2
+        const c = { x: a.x + dir.x * sm, z: a.z + dir.z * sm }
+        const g = new THREE.Group()
+        build(g, to - from)
+        g.position.set(c.x, groundHeight(c.x, c.z), c.z)
+        g.rotation.y = yaw
+        this.scene.add(g)
+      }
+      seg(Math.max(s0, vaultStart), s1, (g, l) => {
+        const geo = new THREE.ExtrudeGeometry(vault, { depth: l + 0.05, bevelEnabled: false, curveSegments: 16 })
+        geo.translate(0, 0, -(l + 0.05) / 2)
+        const v = new THREE.Mesh(geo, wallMat)
+        v.position.y = 4.6
+        v.receiveShadow = true
+        g.add(v)
+        if (i % 2 === 0) {
+          const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, Math.min(1.6, l)), lightMat)
+          lamp.position.set(0, 4.6 + half - 0.08, 0)
+          g.add(lamp)
+        }
+      })
       for (const sd of [-1, 1]) {
-        const wall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 6.6, len / n + 0.05), brickMat)
-        wall.position.set(sd * (half + 0.4), 1.3, 0)
-        seg.add(wall)
+        seg(Math.max(s0, sideStart(sd, half + 0.8)), s1, (g, l) => {
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 6.6, l + 0.05), wallMat)
+          wall.position.set(sd * (half + 0.4), 1.3, 0)
+          g.add(wall)
+        })
       }
-      if (i % 2 === 0) {
-        const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 1.6), lightMat)
-        lamp.position.set(0, 4.6 + half - 0.08, 0)
-        seg.add(lamp)
-      }
-      seg.position.set(c.x, y, c.z)
-      seg.rotation.y = yaw
-      this.scene.add(seg)
     }
   }
 
@@ -1154,10 +1289,12 @@ export class CampusWorld {
 
   private addStreetDressing(): void {
     const sign = this.signPlane(signTexture('木柵路一段', { color: '#ffffff', bg: '#2f6a46', size: 120 }), 4.8, 1.2)
-    const p = { x: START.pos.x + 8, z: START.pos.z + 2 }
+    // 路牌立在校門西側人行道，不擋住校門正面
+    const T = GATE_FRAME.tan
+    const p = { x: START.pos.x - T.x * 16, z: START.pos.z - T.z * 16 }
     const y = groundHeight(p.x, p.z)
     sign.position.set(p.x, y + 4, p.z)
-    sign.rotation.y = Math.PI * 0.08
+    sign.rotation.y = Math.atan2(-GATE_FRAME.nIn.x, -GATE_FRAME.nIn.z)
     this.scene.add(sign)
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4), new THREE.MeshLambertMaterial({ color: 0x777777 }))
     pole.position.set(p.x, y + 2, p.z - 0.1)
@@ -1173,15 +1310,26 @@ export class CampusWorld {
     const r = rng(42)
     const trees: { x: number; z: number; s: number; palm?: boolean }[] = []
     // 山坡樹林
+    // 依正射影像樹冠遮罩種樹：只長在航照上有樹冠、且不是步道／建物／場地的位置
+    const noTree = AREAS.filter(a => a.kind === 'sports' || a.kind === 'court' || a.kind === 'field' || a.kind === 'plaza')
     let guard = 0
-    while (trees.length < 3200 && guard++ < 60000) {
+    while (trees.length < 4200 && guard++ < 140000) {
       const x = BOUNDS.minX + r() * (BOUNDS.maxX - BOUNDS.minX)
       const z = BOUNDS.minZ + r() * (BOUNDS.maxZ - BOUNDS.minZ)
+      if (!canopyAt(x, z)) continue
+      const p = { x, z }
       const h = hillAt(x, z)
-      if (h < 1.6) continue
-      const tp = tunnelParam({ x, z })
+      const tp = tunnelParam(p)
       if (tp.d < TUNNEL.w / 2 + 2 && tp.t > -0.05 && tp.t < 1.05 && h < 11) continue
-      trees.push({ x, z, s: 1.0 + r() * 1.0 })
+      // 校門正前方與門體兩側保持淨空
+      if (Math.hypot(x - GATE_FRAME.a.x, z - GATE_FRAME.a.z) < GATE_CLEAR_R && gateDepth(p) < 4) continue
+      if (h < 1.6) {
+        // 平地上的樹：避開步道、建物與主動線
+        if (onPaved(p) || insideSolid(p, 2.5) || distToPolyline(p, ROUTE) < 6) continue
+        if (noTree.some(a => pointInPolygon(p, a.pts))) continue
+        if (BUILDINGS.some(b => pointInPolygon(p, b.pts))) continue
+      } else if (insideSolid(p, 1.5)) continue
+      trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : 1.0 + r() * 1.0 })
     }
     // 學校廣場樹陣（避開主動線、舞台與後校門步道）
     const plaza = AREAS.find(a => a.id === 'school-plaza')!

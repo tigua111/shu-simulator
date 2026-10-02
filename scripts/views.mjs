@@ -16,6 +16,9 @@ const VIEWS = {
   'v6-mgmt-0045_36': [[185, 75, 300], [172, 30, 228]],
   'v7-core-top': [[-70, 260, 20], [-70, 20, -12]],
   'v8-east-top': [[150, 300, 40], [150, 20, -5]],
+  'v9-gate-top': [[-232, 150, 100], [-232, 12, 82]],
+  'v10-ramp-low': [[-190, 34, 60], [-125, 24, -8]],
+  'v11-ramp-side': [[-90, 60, 70], [-150, 20, 10]],
 }
 let browser
 try {
@@ -34,7 +37,8 @@ try {
   await page.goto(url)
   await page.waitForSelector('body.is-ready .start.is-open', { timeout: 40_000 })
   await page.click('[data-start="walk"]')
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(1500)
+  await page.screenshot({ path: `${out}/w0-gate-walk.png` })
   await page.evaluate(() => window.__campus.explorer.setMode('overview'))
   await page.evaluate(() => {
     const { explorer } = window.__campus
