@@ -12,6 +12,13 @@ export interface UiActions {
   reset: () => void
   touchMove: (x: number, y: number) => void
   touchLook: (dx: number, dy: number) => void
+  edit: (on: boolean) => void
+  editRotate: (deg: number) => void
+  editResetOne: () => void
+  editResetAll: () => void
+  editExport: () => void
+  editImport: (text: string) => void
+  editApply: () => void
 }
 
 const SOURCES = [
@@ -63,6 +70,7 @@ export class Ui {
         <button type="button" data-mode="walk" class="is-active">步行</button>
         <button type="button" data-mode="overview">俯瞰</button>
         <button type="button" data-mode="tour">自動導覽</button>
+        <button type="button" data-edit-toggle>編輯</button>
         <span class="sep"></span>
         <button type="button" data-open="help">說明</button>
         <button type="button" data-open="sources">來源</button>
@@ -82,6 +90,24 @@ export class Ui {
         <div class="tour-track"><i></i></div>
         <button type="button" class="btn small" data-tour-restart>從頭</button>
       </div>
+      <div class="editbar" aria-label="建築位置編輯">
+        <div class="edit-sel"><b data-edit-num>✥</b><div><strong data-edit-name>按住任一棟校舍拖曳</strong><small data-edit-info>拖曳空白處旋轉視角・右鍵或雙指平移・滾輪或雙指縮放</small></div></div>
+        <div class="edit-row needs-sel">
+          <button type="button" class="btn small" data-edit-rot="15" title="逆時針 15°（Q）">↺ 15°</button>
+          <button type="button" class="btn small" data-edit-rot="1" title="逆時針 1°（Shift+Q）">↺ 1°</button>
+          <button type="button" class="btn small" data-edit-rot="-1" title="順時針 1°（Shift+E）">↻ 1°</button>
+          <button type="button" class="btn small" data-edit-rot="-15" title="順時針 15°（E）">↻ 15°</button>
+          <button type="button" class="btn small" data-edit-reset-one>重設這棟</button>
+        </div>
+        <div class="edit-row">
+          <span class="edit-count" data-edit-count>尚未調整</span>
+          <button type="button" class="btn small" data-edit-reset-all>全部重設</button>
+          <button type="button" class="btn small" data-edit-export>匯出座標</button>
+          <button type="button" class="btn small" data-edit-import>匯入</button>
+          <button type="button" class="btn small primary" data-edit-apply>套用並重新整理</button>
+          <input type="file" accept="application/json,.json" data-edit-file hidden />
+        </div>
+      </div>
       <div class="minimap-wrap"><canvas class="minimap" aria-label="小地圖，點擊可移動到該處"></canvas><span>小地圖・點擊可移動</span></div>
       <div class="crosshair"></div>
       <div class="hint"></div>
@@ -96,6 +122,7 @@ export class Ui {
             <tr><th>手機</th><td>左下拖曳搖桿移動（推到底快走），右側拖曳畫面環顧</td></tr>
             <tr><th>模式</th><td><kbd>1</kbd> 步行・<kbd>2</kbd> 俯瞰・<kbd>3</kbd> 自動導覽・<kbd>R</kbd> 回到前校門</td></tr>
             <tr><th>俯瞰</th><td>拖曳旋轉、右鍵或雙指平移、滾輪或雙指縮放</td></tr>
+            <tr><th>編輯</th><td>按「編輯」後按住建築拖曳移動，<kbd>Q</kbd>／<kbd>E</kbd> 或按鈕旋轉；調整自動保存在本機瀏覽器，「套用並重新整理」讓地形與碰撞跟著更新，「匯出座標」下載新輪廓（含經緯度）</td></tr>
             <tr><th>跳轉</th><td>點選左側地標索引，或點擊右下小地圖上的位置</td></tr>
           </table>
           <p class="note">地面上的<span class="swatch route"></span>紅磚色步道與白色箭頭是主動線，粉紅光柱是終點傳播大廈 C 棟入口。</p>
@@ -142,6 +169,22 @@ export class Ui {
         if (e.target === m || (e.target as HTMLElement).closest('[data-close]')) m.classList.remove('is-open')
       })
     })
+    const editBtn = root.querySelector<HTMLButtonElement>('[data-edit-toggle]')!
+    editBtn.addEventListener('click', () => actions.edit(!this.editing))
+    root.querySelectorAll<HTMLButtonElement>('[data-edit-rot]').forEach(b => b.addEventListener('click', () => actions.editRotate(Number(b.dataset.editRot))))
+    root.querySelector('[data-edit-reset-one]')!.addEventListener('click', () => actions.editResetOne())
+    root.querySelector('[data-edit-reset-all]')!.addEventListener('click', () => {
+      if (window.confirm('把所有建築回復到原始位置？')) actions.editResetAll()
+    })
+    root.querySelector('[data-edit-export]')!.addEventListener('click', () => actions.editExport())
+    root.querySelector('[data-edit-apply]')!.addEventListener('click', () => actions.editApply())
+    const file = root.querySelector<HTMLInputElement>('[data-edit-file]')!
+    root.querySelector('[data-edit-import]')!.addEventListener('click', () => file.click())
+    file.addEventListener('change', async () => {
+      const f = file.files?.[0]
+      if (f) actions.editImport(await f.text())
+      file.value = ''
+    })
     root.querySelector('[data-toggle-index]')!.addEventListener('click', () => document.body.classList.toggle('index-open'))
     root.querySelector('[data-reset]')!.addEventListener('click', () => actions.reset())
     this.tourBtn.addEventListener('click', () => actions.tourToggle())
@@ -164,6 +207,35 @@ export class Ui {
   openModal(name: string): void {
     if (document.pointerLockElement) document.exitPointerLock()
     this.root.querySelector(`[data-modal="${name}"]`)?.classList.add('is-open')
+  }
+
+  get editing(): boolean {
+    return document.body.classList.contains('is-editing')
+  }
+
+  setEditing(on: boolean): void {
+    document.body.classList.toggle('is-editing', on)
+    this.root.querySelector('[data-edit-toggle]')!.classList.toggle('is-active', on)
+    if (on) {
+      this.root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b => b.classList.remove('is-active'))
+      this.setHint(matchMedia('(pointer: coarse)').matches ? '編輯模式：按住建築拖曳移動・用下方按鈕旋轉' : '編輯模式：按住建築拖曳移動・Q／E 旋轉（加 Shift 微調 1°）・Esc 取消選取')
+    }
+  }
+
+  setEditInfo(sel: { num: string; name: string; dx: number; dz: number; rotDeg: number } | null, count: number): void {
+    const q = (s: string) => this.root.querySelector<HTMLElement>(s)!
+    this.root.querySelector('.editbar')!.classList.toggle('has-sel', !!sel)
+    if (sel) {
+      q('[data-edit-num]').textContent = sel.num || '·'
+      q('[data-edit-name]').textContent = sel.name
+      const f = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(1)
+      q('[data-edit-info]').textContent = `相對原始位置：東西 ${f(sel.dx)} m・南北 ${f(-sel.dz)} m・旋轉 ${f(sel.rotDeg)}°`
+    } else {
+      q('[data-edit-num]').textContent = '✥'
+      q('[data-edit-name]').textContent = '按住任一棟校舍拖曳'
+      q('[data-edit-info]').textContent = '拖曳空白處旋轉視角・右鍵或雙指平移・滾輪或雙指縮放'
+    }
+    q('[data-edit-count]').textContent = count ? `已調整 ${count} 棟（已自動保存）` : '尚未調整'
   }
 
   setMode(mode: Mode): void {

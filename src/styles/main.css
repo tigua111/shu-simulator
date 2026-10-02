@@ -835,3 +835,105 @@ body.has-touch.is-running:not([data-mode='overview']) .touch {
     transition: none !important;
   }
 }
+
+/* ─── 建築位置編輯 ─────────────────────────────────── */
+.editbar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(22px + var(--safe-b));
+  width: min(620px, calc(100% - 520px));
+  min-width: 340px;
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  pointer-events: none;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--paper);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0s linear 0.25s;
+  visibility: hidden;
+  z-index: 6;
+}
+body.is-editing .editbar {
+  visibility: visible;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+body.is-editing .caption,
+body.is-editing .tourbar {
+  display: none;
+}
+.edit-sel {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.edit-sel > b {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-family: var(--num);
+  font-size: 14px;
+}
+.editbar.has-sel .edit-sel > b {
+  background: var(--magenta);
+  color: #fff;
+}
+.edit-sel strong {
+  display: block;
+  font-size: 15px;
+}
+.edit-sel small {
+  display: block;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.editbar:not(.has-sel) .edit-row.needs-sel .btn {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.edit-count {
+  margin-right: auto;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.modes button[data-edit-toggle].is-active {
+  background: var(--magenta);
+  color: #fff;
+}
+body.is-editing #game {
+  cursor: grab;
+}
+body.is-dragging #game {
+  cursor: grabbing;
+}
+@media (max-width: 760px) {
+  .editbar {
+    width: calc(100% - 20px);
+    min-width: 0;
+    bottom: calc(74px + var(--safe-b));
+    padding: 10px 12px;
+  }
+  body.is-editing .hint {
+    display: none;
+  }
+  body.is-editing .minimap-wrap {
+    display: none;
+  }
+}

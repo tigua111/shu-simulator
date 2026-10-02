@@ -7,6 +7,7 @@
 import { SITE } from './site'
 import type { AreaKind, BuildingStyle, P2, PathKind, SiteBuilding } from './siteTypes'
 import { APPEARANCE, type RoofKind } from './appearance'
+import { LOADED_EDITS, transformPoint } from './edits'
 
 export type { BuildingStyle, PathKind, AreaKind, RoofKind }
 export type Vec2 = { x: number; z: number }
@@ -75,7 +76,12 @@ export function centroid(pts: Vec2[]): Vec2 {
 }
 
 export const BUILDINGS: Building[] = SITE.buildings.map(b => {
-  const pts = b.poly.map(v)
+  const raw = b.poly.map(v)
+  // 編輯模式保存的調整：繞原始質心旋轉後平移
+  const e = LOADED_EDITS[b.id]
+  const c0 = centroid(raw)
+  const tf = (p: Vec2): Vec2 => (e ? transformPoint(p, c0, e) : p)
+  const pts = raw.map(tf)
   const ap = APPEARANCE[b.id]
   return {
     ...b,
@@ -83,7 +89,7 @@ export const BUILDINGS: Building[] = SITE.buildings.map(b => {
     h: ap?.h ?? b.h,
     roof: ap?.roof ?? 'flat',
     pts,
-    ground: b.ground ? b.ground.map(g => g.map(v)) : [pts],
+    ground: b.ground ? b.ground.map(g => g.map(v).map(tf)) : [pts],
     c: centroid(pts),
     box: polyBox(pts),
   }
@@ -97,6 +103,8 @@ export const AREAS: Area[] = SITE.areas.map(a => ({ id: a.id, kind: a.kind, pts:
 export const FOREST: Vec2[][] = SITE.forest.map(f => f.map(v))
 export const BOUNDS = SITE.bounds
 export const ORIGIN = SITE.origin
+/** 原始（未調整）建築輪廓，供編輯器匯出差異 */
+export const ORIGINAL_POLYS: Record<string, Vec2[]> = Object.fromEntries(SITE.buildings.map(b => [b.id, b.poly.map(v)]))
 
 export const TUNNEL = PATHS.find(p => p.kind === 'tunnel')!
 export const TRACK = { x: SITE.track.center[0], z: SITE.track.center[1], rot: SITE.track.rot, len: SITE.track.len, w: SITE.track.w, lane: SITE.track.lane }

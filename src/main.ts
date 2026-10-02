@@ -6,6 +6,8 @@ import { LANDMARKS, type Landmark } from './campus/landmarks'
 import { Explorer, type Mode } from './campus/explorer'
 import { isWalkable } from './campus/geometry'
 import { CampusWorld } from './campus/world'
+import { BuildingEditor } from './campus/editor'
+import { LOADED_EDITS, sanitize } from './campus/edits'
 import { Minimap } from './ui/minimap'
 import { Ui } from './ui/ui'
 
@@ -35,7 +37,23 @@ function boot(): void {
   })
   explorer.reducedMotion = reduced
 
+  let editor: BuildingEditor | undefined
+  const setEdit = (on: boolean) => {
+    if (!editor || !ui) return
+    if (on) {
+      explorer.setMode('overview')
+      ui.setMode('overview')
+      ui.setCaption(null)
+      editor.enable()
+      ui.setEditing(true)
+    } else {
+      editor.disable()
+      ui.setEditing(false)
+      ui.setMode(explorer.mode)
+    }
+  }
   const setMode = (mode: Mode) => {
+    if (ui?.editing) setEdit(false)
     explorer.setMode(mode)
     ui!.setMode(mode)
   }
@@ -66,9 +84,47 @@ function boot(): void {
     },
     touchMove: (x, y) => explorer.setTouchMove(x, y),
     touchLook: (dx, dy) => explorer.addLook(dx, dy),
+    edit: on => setEdit(on),
+    editRotate: deg => editor?.rotate(deg),
+    editResetOne: () => editor?.resetSelected(),
+    editResetAll: () => editor?.resetAll(),
+    editExport: () => {
+      if (!editor) return
+      const json = editor.exportJson()
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `shucampus-building-edits-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+      navigator.clipboard?.writeText(json).catch(() => {})
+      u.toast(`已匯出 ${editor.editedCount} 棟建築的新座標（也複製到剪貼簿）`, 3500)
+    },
+    editImport: text => {
+      try {
+        const edits = sanitize(JSON.parse(text))
+        editor?.importEdits(edits)
+        u.toast(`已匯入 ${Object.keys(edits).length} 棟的調整；按「套用並重新整理」讓地形與碰撞跟著更新`, 4500)
+      } catch {
+        u.toast('無法讀取這個檔案（需為匯出的 JSON）', 3000)
+      }
+    },
+    editApply: () => window.location.reload(),
   })
   ui = u
   u.setMode('walk')
+  editor = new BuildingEditor(canvas, explorer.camera, world, {
+    change: (sel, count) =>
+      u.setEditInfo(sel ? { num: sel.b.num, name: sel.b.name, dx: sel.total.dx, dz: sel.total.dz, rotDeg: (sel.total.rot * 180) / Math.PI } : null, count),
+  })
+  const loadedCount = Object.keys(LOADED_EDITS).length
+  if (loadedCount) {
+    document.querySelectorAll('[data-start]').forEach(b =>
+      b.addEventListener('click', () => setTimeout(() => u.toast(`已套用你在編輯模式調整過的 ${loadedCount} 棟建築位置（編輯 → 全部重設可還原）`, 5000), 400)),
+    )
+  }
 
   const minimap = new Minimap(u.minimapCanvas, p => {
     if (!isWalkable(p)) {
@@ -85,6 +141,7 @@ function boot(): void {
 
   window.addEventListener('keydown', e => {
     if (!u.started || u.modalOpen) return
+    if ((e.target as HTMLElement)?.closest?.('input, textarea')) return
     if (e.code === 'Digit1') setMode('walk')
     else if (e.code === 'Digit2') setMode('overview')
     else if (e.code === 'Digit3') setMode('tour')
@@ -190,7 +247,7 @@ function boot(): void {
   requestAnimationFrame(frame)
 
   // 測試用唯讀掛鉤
-  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u }
+  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor }
   document.body.classList.add('is-ready')
 }
 

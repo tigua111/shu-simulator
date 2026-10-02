@@ -1,0 +1,99 @@
+// 編輯模式端對端檢查（需先 pnpm build）：拖曳行政大樓、旋轉、匯出、重新整理後仍保留。
+import { spawn } from 'node:child_process'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { chromium } from 'playwright'
+const port = 5200 + Math.floor(Math.random() * 300)
+const url = `http://127.0.0.1:${port}/`
+const out = 'shots/edit'
+mkdirSync(out, { recursive: true })
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { stdio: 'ignore' })
+let browser
+const fail = m => {
+  console.error('FAIL', m)
+  process.exitCode = 1
+}
+try {
+  for (let i = 0; i < 60; i++) {
+    try {
+      if ((await fetch(url)).ok) break
+    } catch {}
+    await new Promise(r => setTimeout(r, 250))
+  }
+  browser = await chromium.launch({ args: ['--ignore-gpu-blocklist', '--use-gl=angle', '--use-angle=swiftshader'] })
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, acceptDownloads: true })
+  const page = await ctx.newPage()
+  const errors = []
+  page.on('pageerror', e => errors.push(String(e)))
+  page.on('console', m => m.type() === 'error' && errors.push(m.text()))
+  await page.goto(url)
+  await page.waitForSelector('body.is-ready .start.is-open', { timeout: 40_000 })
+  await page.click('[data-start="overview"]')
+  await page.click('[data-edit-toggle]')
+  const top = async () =>
+    page.evaluate(() => {
+      const { explorer, world } = window.__campus
+      const b = [...world.buildingPivots.entries()].find(([, p]) => p.children[0].children.some(m => m.userData.num === '05'))
+      const [id, p] = b
+      explorer.orbit.target.set(p.position.x, 20, p.position.z)
+      explorer.camera.position.set(p.position.x, 220, p.position.z + 40)
+      explorer.orbit.update()
+      for (let i = 0; i < 30; i++) explorer.update(0.05)
+      explorer.camera.updateMatrixWorld()
+      const v = p.position.clone()
+      v.y = 30
+      v.project(explorer.camera)
+      return { id, x: (v.x + 1) * 640, y: (1 - v.y) * 360, px: p.position.x, pz: p.position.z }
+    })
+  const a = await top()
+  console.log('ADM pivot', a)
+  await page.waitForTimeout(400)
+  await page.mouse.move(a.x, a.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 10; i++) await page.mouse.move(a.x + i * 8, a.y + i * 3)
+  await page.mouse.up()
+  const moved = await page.evaluate(id => {
+    const p = window.__campus.world.buildingPivots.get(id)
+    return { x: p.position.x, z: p.position.z, ls: localStorage.getItem('shucampus.buildingEdits.v1'), name: document.querySelector('[data-edit-name]').textContent, info: document.querySelector('[data-edit-info]').textContent }
+  }, a.id)
+  console.log('after drag', moved)
+  if (Math.hypot(moved.x - a.px, moved.z - a.pz) < 5) fail('building did not move')
+  if (!moved.ls) fail('not saved')
+  await page.click('[data-edit-rot="15"]')
+  await page.screenshot({ path: `${out}/e1-dragged.png` })
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-edit-export]')])
+  const file = `${out}/export.json`
+  await dl.saveAs(file)
+  const ex = JSON.parse(readFileSync(file, 'utf8'))
+  console.log('export', JSON.stringify(ex.buildings.map(b => ({ id: b.id, name: b.name, dx: b.dx, dz: b.dz, rotDeg: b.rotDeg, ll0: b.lonlat[0] }))))
+  if (ex.buildings.length !== 1 || Math.abs(ex.buildings[0].rotDeg - 15) > 0.01) fail('export content')
+  await page.reload()
+  await page.waitForSelector('body.is-ready .start.is-open', { timeout: 40_000 })
+  const after = await page.evaluate(id => {
+    const p = window.__campus.world.buildingPivots.get(id)
+    return { x: p.position.x, z: p.position.z }
+  }, a.id)
+  console.log('after reload', after)
+  if (Math.hypot(after.x - moved.x, after.z - moved.z) > 0.5) fail('reload did not keep position')
+  await page.click('[data-start="overview"]')
+  await page.click('[data-edit-toggle]')
+  await top()
+  await page.waitForTimeout(600)
+  await page.screenshot({ path: `${out}/e2-reloaded.png` })
+  page.once('dialog', d => d.accept())
+  await page.click('[data-edit-reset-all]')
+  const reset = await page.evaluate(() => localStorage.getItem('shucampus.buildingEdits.v1'))
+  if (reset) fail('reset all did not clear')
+  // 手機版面
+  const m = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage()
+  await m.goto(url)
+  await m.waitForSelector('body.is-ready .start.is-open', { timeout: 150_000 })
+  await m.click('[data-start="overview"]')
+  await m.click('[data-edit-toggle]')
+  await m.waitForTimeout(800)
+  await m.screenshot({ path: `${out}/e3-mobile.png` })
+  if (errors.length) fail('console errors: ' + errors.join(' | '))
+  console.log(process.exitCode ? 'edit-check: FAIL' : 'edit-check: PASS')
+} finally {
+  await browser?.close()
+  server.kill()
+}

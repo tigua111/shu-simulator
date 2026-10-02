@@ -301,6 +301,8 @@ export interface LabelEntry {
 export class CampusWorld {
   readonly scene = new THREE.Scene()
   readonly labels: LabelEntry[] = []
+  /** 建築 id → 以質心為原點的樞紐群組 */
+  readonly buildingPivots = new Map<string, THREE.Group>()
   readonly obstacles: Obstacle[] = []
   /** 用來判斷標籤是否被建築遮住的網格 */
   readonly occluders: THREE.Object3D[] = []
@@ -323,7 +325,17 @@ export class CampusWorld {
     this.addGround()
     this.addPaths()
     this.addSportsGround()
-    for (const b of BUILDINGS) scene.add(this.makeBuilding(b))
+    for (const b of BUILDINGS) {
+      // 以質心為樞紐包一層，編輯模式可直接平移／旋轉
+      const pivot = new THREE.Group()
+      pivot.position.set(b.c.x, 0, b.c.z)
+      const g = this.makeBuilding(b)
+      g.position.set(-b.c.x, 0, -b.c.z)
+      pivot.add(g)
+      pivot.userData.bid = b.id
+      scene.add(pivot)
+      this.buildingPivots.set(b.id, pivot)
+    }
     this.addNeighbors()
     this.addGateAndTunnel()
     this.addStage()
@@ -683,6 +695,7 @@ export class CampusWorld {
         m.castShadow = true
         m.receiveShadow = true
         m.userData.num = b.num
+        m.userData.bid = b.id
         this.occluders.push(m)
         g.add(m)
       }
