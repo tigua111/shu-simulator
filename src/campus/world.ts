@@ -15,6 +15,7 @@ import {
   START,
   TRACK,
   TUNNEL,
+  GATE_NORMAL,
   buildingById,
   centroid,
   groundHeight,
@@ -26,7 +27,10 @@ import {
 } from './data'
 import { LANDMARKS, type Landmark } from './landmarks'
 import { CANOPY } from './canopy'
-import { distToPolyline, distToSegment, insideSolid, isWalkable, onPaved, pathAt, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
+import { LOADED_EDITS, type Edit } from './edits'
+import { MovableRegistry, bindObstacles, type Movable } from './movables'
+import { PLAZA_SURVEY } from './plazaSurvey'
+import { distToPolyline, insideSolid, isWalkable, onPaved, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
 import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, fieldTexture, signTexture, solarTexture, stoneTexture } from './textures'
 
 /** 可重現的亂數 */
@@ -70,31 +74,13 @@ export function canopyAt(x: number, z: number): boolean {
   return ((CANOPY_BITS[k >> 3] >> (7 - (k & 7))) & 1) === 1
 }
 
-// ─── 前校門座向：正面平行木柵路（隧道本身斜向東北） ───────────────
+// ─── 前校門座向：正面平行木柵路，隧道由門口垂直進入（data.ts 已把隧道改成折線） ───────────────
 export const GATE_FRAME = (() => {
   const a = TUNNEL.pts[0]
-  const b = TUNNEL.pts[TUNNEL.pts.length - 1]
-  const len = Math.hypot(b.x - a.x, b.z - a.z)
-  const dir = { x: (b.x - a.x) / len, z: (b.z - a.z) / len }
-  let best = Infinity
-  let tan = { x: 1, z: 0 }
-  for (const p of PATHS) {
-    if (p.kind !== 'road') continue
-    for (let i = 1; i < p.pts.length; i++) {
-      const d = distToSegment(a, p.pts[i - 1], p.pts[i])
-      if (d < best) {
-        best = d
-        const l = Math.hypot(p.pts[i].x - p.pts[i - 1].x, p.pts[i].z - p.pts[i - 1].z) || 1
-        tan = { x: (p.pts[i].x - p.pts[i - 1].x) / l, z: (p.pts[i].z - p.pts[i - 1].z) / l }
-      }
-    }
-  }
-  let nIn = { x: -tan.z, z: tan.x }
-  if (nIn.x * dir.x + nIn.z * dir.z < 0) nIn = { x: -nIn.x, z: -nIn.z }
-  const cos = nIn.x * dir.x + nIn.z * dir.z
-  // 斜交的隧道穿過校門立面時所需的半開口寬
-  const halfOpen = TUNNEL.w / 2 / Math.max(0.5, cos) + 0.5
-  return { a, dir, nIn, tan: { x: nIn.z, z: -nIn.x }, cos, halfOpen }
+  const nIn = GATE_NORMAL
+  // 隧道開頭與立面垂直，開口只需隧道半寬加一點餘裕
+  const halfOpen = TUNNEL.w / 2 + 0.5
+  return { a, dir: nIn, nIn, tan: { x: nIn.z, z: -nIn.x }, cos: 1, halfOpen }
 })()
 /** 點相對前校門立面的深度（正值＝門內、負值＝木柵路側） */
 function gateDepth(p: Vec2): number {
@@ -106,16 +92,36 @@ function smooth01(t: number): number {
   const c = Math.max(0, Math.min(1, t))
   return c * c * (3 - 2 * c)
 }
+const TUNNEL_LEN = (() => {
+  let l = 0
+  for (let i = 1; i < TUNNEL.pts.length; i++) l += Math.hypot(TUNNEL.pts[i].x - TUNNEL.pts[i - 1].x, TUNNEL.pts[i].z - TUNNEL.pts[i - 1].z)
+  return l
+})()
+/** d：到隧道中心折線的距離；t：沿折線的弧長比例（門口 0、出口 1，可超出範圍） */
 function tunnelParam(p: Vec2): { d: number; t: number } {
-  const a = TUNNEL.pts[0]
-  const b = TUNNEL.pts[TUNNEL.pts.length - 1]
-  const dx = b.x - a.x
-  const dz = b.z - a.z
-  const len2 = dx * dx + dz * dz
-  const t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / len2
-  return { d: distToPolyline(p, TUNNEL.pts), t }
+  const P = TUNNEL.pts
+  let best = Infinity
+  let bestS = 0
+  let acc = 0
+  for (let i = 1; i < P.length; i++) {
+    const q = P[i - 1]
+    const r = P[i]
+    const vx = r.x - q.x
+    const vz = r.z - q.z
+    const l = Math.hypot(vx, vz) || 1
+    let u = ((p.x - q.x) * vx + (p.z - q.z) * vz) / (l * l)
+    // 兩端延伸，讓門外／出口外也有對應的 t
+    if (i > 1) u = Math.max(0, u)
+    if (i < P.length - 1) u = Math.min(1, u)
+    const d = Math.hypot(p.x - q.x - u * vx, p.z - q.z - u * vz)
+    if (d < best) {
+      best = d
+      bestS = acc + u * l
+    }
+    acc += l
+  }
+  return { d: best, t: bestS / TUNNEL_LEN }
 }
-
 function buildField(): Field {
   const nx = Math.floor((BOUNDS.maxX - BOUNDS.minX) / GRID) + 1
   const nz = Math.floor((BOUNDS.maxZ - BOUNDS.minZ) / GRID) + 1
@@ -306,6 +312,9 @@ export class CampusWorld {
   readonly obstacles: Obstacle[] = []
   /** 用來判斷標籤是否被建築遮住的網格 */
   readonly occluders: THREE.Object3D[] = []
+  readonly tunnelPts = TUNNEL.pts
+  /** 編輯模式可移動的所有物件 */
+  readonly movables = new MovableRegistry()
   readonly sun: THREE.DirectionalLight
   private beacon!: THREE.Group
 
@@ -335,18 +344,101 @@ export class CampusWorld {
       pivot.userData.bid = b.id
       scene.add(pivot)
       this.buildingPivots.set(b.id, pivot)
+      // 建築調整寫回資料（啟動時已套用 base），樞紐只承載本次工作階段的增量
+      const base: Edit = LOADED_EDITS[b.id] ?? { dx: 0, dz: 0, rot: 0 }
+      const start = pivot.position.clone()
+      const mv: Movable = {
+        id: b.id,
+        kind: 'building',
+        label: b.name,
+        num: b.num,
+        home: { x: b.c.x - base.dx, z: b.c.z - base.dz },
+        edit: { ...base },
+        dataLevel: true,
+        apply: e => {
+          mv.edit = { ...e }
+          pivot.position.set(start.x + e.dx - base.dx, 0, start.z + e.dz - base.dz)
+          pivot.rotation.y = e.rot - base.rot
+          pivot.updateMatrixWorld(true)
+        },
+        bounds: t => t.setFromObject(pivot),
+      }
+      this.movables.add(mv, pivot)
     }
     this.addNeighbors()
     this.addGateAndTunnel()
-    this.addStage()
+    this.capture('obj:stage', '八風舞台', '', 'ground', () => this.addStage())
     this.addCampusDetails()
-    this.addBackGate()
+    this.addPlazaFurniture()
+    this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
     this.addStreetDressing()
     this.addTrees()
     this.addLamps()
     this.addRouteArrows()
     this.addBeacon()
     this.addLabels()
+    this.applySavedEdits()
+  }
+
+  /**
+   * 把 build 期間加入場景的物件收進一個以外框中心為樞紐的群組，登錄為可移動物件。
+   * build 期間加入的碰撞點也跟著移動；follow 決定移動後是否貼齊新位置的地面高度。
+   */
+  private capture(id: string, label: string, num: string, follow: 'ground' | 'terrain' | 'none', build: () => void): THREE.Group | null {
+    const g = new THREE.Group()
+    const scene = this.scene as unknown as { add: (...o: THREE.Object3D[]) => unknown }
+    const o0 = this.obstacles.length
+    scene.add = (...objs: THREE.Object3D[]) => {
+      g.add(...objs)
+      return this.scene
+    }
+    try {
+      build()
+    } finally {
+      delete (scene as { add?: unknown }).add
+    }
+    if (!g.children.length) return null
+    const box = new THREE.Box3().setFromObject(g)
+    const c = { x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2 }
+    for (const ch of g.children) {
+      ch.position.x -= c.x
+      ch.position.z -= c.z
+    }
+    g.position.set(c.x, 0, c.z)
+    this.scene.add(g)
+    const moveObs = bindObstacles(this.obstacles.slice(o0), c)
+    const yAt = (x: number, z: number) => (follow === 'none' ? 0 : follow === 'terrain' ? terrainHeight(x, z) : groundHeight(x, z))
+    const h0 = yAt(c.x, c.z)
+    const mv: Movable = {
+      id,
+      kind: 'object',
+      label,
+      num: num || undefined,
+      home: c,
+      edit: { dx: 0, dz: 0, rot: 0 },
+      dataLevel: false,
+      apply: e => {
+        mv.edit = { ...e }
+        const nx = c.x + e.dx
+        const nz = c.z + e.dz
+        g.position.set(nx, yAt(nx, nz) - h0, nz)
+        g.rotation.y = e.rot
+        g.updateMatrixWorld(true)
+        moveObs(e)
+      },
+      bounds: t => t.setFromObject(g),
+    }
+    this.movables.add(mv, g)
+    return g
+  }
+
+  /** 啟動時套用保存的非資料層調整（樹、路燈、構造物…） */
+  private applySavedEdits(): void {
+    for (const m of this.movables.items.values()) {
+      if (m.dataLevel) continue
+      const e = LOADED_EDITS[m.id]
+      if (e) m.apply(e)
+    }
   }
 
   /** 陰影相機跟著玩家，總覽時涵蓋全區 */
@@ -483,6 +575,7 @@ export class CampusWorld {
     geo.computeVertexNormals()
     const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }))
     ground.receiveShadow = true
+    ground.name = 'terrain'
     this.scene.add(ground)
   }
 
@@ -629,7 +722,7 @@ export class CampusWorld {
     g.add(fm)
     g.position.set(TRACK.x, y, TRACK.z)
     g.rotation.y = TRACK.rot
-    this.scene.add(g)
+    this.capture('obj:track', '操場跑道', '18', 'ground', () => this.scene.add(g))
     // OSM 球場（綠色場地、網球場、東側小球場）
     const court = new THREE.MeshLambertMaterial({ map: courtTexture() })
     for (const a of AREAS) {
@@ -647,7 +740,7 @@ export class CampusWorld {
         const sz = Math.max(...zs) - z0
         for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) - x0) / sx, (uv.getY(i) - z0) / sz)
       }
-      this.scene.add(m)
+      this.capture(`obj:court-${a.id}`, '球場', '', 'ground', () => this.scene.add(m))
     }
     // 球場籃架（綠色場地兩端）
     const fieldArea = AREAS.find(a => a.id === 'field')
@@ -656,7 +749,7 @@ export class CampusWorld {
       const ax = { x: Math.cos(TRACK.rot), z: -Math.sin(TRACK.rot) }
       const pole = new THREE.MeshLambertMaterial({ color: 0x2f6fb0 })
       const board = new THREE.MeshLambertMaterial({ color: 0xffffff })
-      for (const s of [-1, 1]) {
+      for (const s of [-1, 1]) this.capture(`obj:hoop-${s}`, '籃球架', '', 'ground', () => {
         const x = c.x + ax.x * s * 21
         const z = c.z + ax.z * s * 21
         const yy = groundHeight(x, z)
@@ -669,7 +762,7 @@ export class CampusWorld {
         bd.rotation.y = TRACK.rot + Math.PI / 2
         this.scene.add(bd)
         this.obstacles.push({ x, z, r: 0.3 })
-      }
+      })
     }
   }
 
@@ -880,22 +973,43 @@ export class CampusWorld {
   }
 
   private addNeighbors(): void {
-    const caps: THREE.BufferGeometry[] = []
-    const sides: THREE.BufferGeometry[] = []
+    // 每棟獨立網格（牆與屋頂同一幾何、兩組材質），編輯模式可個別移動
+    const wallMat = facadeMat('city', 3.2, 6.4)
+    const roofMats = new Map<number, THREE.Material>()
+    const roofMat = (c: number) => {
+      let m = roofMats.get(c)
+      if (!m) roofMats.set(c, (m = new THREE.MeshLambertMaterial({ color: c })))
+      return m
+    }
     for (const n of NEIGHBORS) {
       const base = baseOf(n.pts)
       const c = centroid(n.pts)
       const [cp, sd] = prism(n.pts, base - 6.4, groundHeight(c.x, c.z) + n.h)
-      caps.push(cp)
-      sides.push(sd)
-    }
-    if (!caps.length) return
-    const wall = new THREE.Mesh(mergeGeometries(sides), facadeMat('city', 3.2, 6.4))
-    const roof = new THREE.Mesh(mergeGeometries(caps), new THREE.MeshLambertMaterial({ color: STYLE_ROOF.city }))
-    for (const m of [wall, roof]) {
-      m.castShadow = true
-      m.receiveShadow = true
-      this.scene.add(m)
+      const geo = mergeGeometries([sd, cp], true)
+      geo.translate(-c.x, 0, -c.z)
+      const mesh = new THREE.Mesh(geo, [wallMat, roofMat(n.roof ?? STYLE_ROOF.city)])
+      mesh.castShadow = mesh.receiveShadow = true
+      const pivot = new THREE.Group()
+      pivot.position.set(c.x, 0, c.z)
+      pivot.add(mesh)
+      this.scene.add(pivot)
+      const base0: Edit = LOADED_EDITS[n.id] ?? { dx: 0, dz: 0, rot: 0 }
+      const mv: Movable = {
+        id: n.id,
+        kind: 'neighbor',
+        label: n.sid ? `周邊民宅 ${n.sid}` : '周邊民宅',
+        home: { x: c.x - base0.dx, z: c.z - base0.dz },
+        edit: { ...base0 },
+        dataLevel: true,
+        apply: e => {
+          mv.edit = { ...e }
+          pivot.position.set(c.x + e.dx - base0.dx, 0, c.z + e.dz - base0.dz)
+          pivot.rotation.y = e.rot - base0.rot
+          pivot.updateMatrixWorld(true)
+        },
+        bounds: t => t.setFromObject(pivot),
+      }
+      this.movables.add(mv, pivot)
     }
   }
 
@@ -903,9 +1017,6 @@ export class CampusWorld {
   private addGateAndTunnel(): void {
     const a = TUNNEL.pts[0]
     const b = TUNNEL.pts[TUNNEL.pts.length - 1]
-    const len = Math.hypot(b.x - a.x, b.z - a.z)
-    const dir = { x: (b.x - a.x) / len, z: (b.z - a.z) / len }
-    const yaw = Math.atan2(-dir.x, -dir.z)
     const half = TUNNEL.w / 2
     const stone = stoneTexture()
     stone.repeat.set(0.18, 0.18)
@@ -970,16 +1081,21 @@ export class CampusWorld {
       gate.rotation.y = facingYaw
       this.scene.add(gate)
     }
-    // 前校門：拱門正面平行木柵路（與新聞大樓、世界大廈立面同向），隧道斜向穿過門體
+    // 前校門：拱門正面平行木柵路（與新聞大樓、世界大廈立面同向），隧道由門口垂直進入
     const G = GATE_FRAME
     const frontYaw = Math.atan2(-G.nIn.x, -G.nIn.z)
     const GATE_DEPTH = 5.5
-    makePortal(a, frontYaw, true, G.halfOpen, GATE_DEPTH)
-    makePortal(b, yaw + Math.PI, false, half, 3)
-    // 門體內地板（地形在此挖空）
-    {
+    const P = TUNNEL.pts
+    const last = P.length - 1
+    const exitLen = Math.hypot(P[last].x - P[last - 1].x, P[last].z - P[last - 1].z) || 1
+    const exitDir = { x: (P[last].x - P[last - 1].x) / exitLen, z: (P[last].z - P[last - 1].z) / exitLen }
+    const exitYaw = Math.atan2(-exitDir.x, -exitDir.z)
+    const floorMat = new THREE.MeshLambertMaterial({ color: 0x5d5e62 })
+    this.capture('obj:gate', '前校門', '01', 'ground', () => {
+      makePortal(a, frontYaw, true, G.halfOpen, GATE_DEPTH)
+      // 門體內地板（地形在此挖空）
       const fw = 2 * (G.halfOpen + 1.4)
-      const floor = new THREE.Mesh(new THREE.PlaneGeometry(fw, 5.7), new THREE.MeshLambertMaterial({ color: 0x5d5e62 }))
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(fw, 5.7), floorMat)
       floor.rotation.set(-Math.PI / 2, 0, 0)
       const holder = new THREE.Group()
       holder.add(floor)
@@ -988,76 +1104,89 @@ export class CampusWorld {
       holder.rotation.y = frontYaw
       floor.receiveShadow = true
       this.scene.add(holder)
-      const bf = new THREE.Mesh(new THREE.PlaneGeometry(2 * (half + 1.6), 7), new THREE.MeshLambertMaterial({ color: 0x5d5e62 }))
+    })
+    this.capture('obj:tunnel-exit', '隧道內口（白色拱）', '', 'ground', () => {
+      makePortal(b, exitYaw + Math.PI, false, half, 3)
+      const bf = new THREE.Mesh(new THREE.PlaneGeometry(2 * (half + 1.6), 7), floorMat)
       bf.rotation.x = -Math.PI / 2
+      bf.receiveShadow = true
       const bh = new THREE.Group()
       bh.add(bf)
-      bf.position.set(0, 0, 0)
-      const bc = { x: b.x - dir.x * 2, z: b.z - dir.z * 2 }
+      const bc = { x: b.x - exitDir.x * 2, z: b.z - exitDir.z * 2 }
       bh.position.set(bc.x, groundHeight(bc.x, bc.z) + 0.04, bc.z)
-      bh.rotation.y = yaw
+      bh.rotation.y = exitYaw
       this.scene.add(bh)
-    }
-    // 隧道側牆／拱頂：斜交處只從校門立面後方開始，避免穿出門外
-    const xAxis = { x: Math.cos(yaw), z: -Math.sin(yaw) }
-    const startFor = (off: number) => {
-      let st = 0
-      for (const sd of [-1, 1]) {
-        const p = { x: a.x + xAxis.x * sd * off, z: a.z + xAxis.z * sd * off }
-        st = Math.max(st, -gateDepth(p) / Math.max(0.5, G.cos))
-      }
-      return st
-    }
-    const sideStart = (sd: number, off: number) => {
-      const p = { x: a.x + xAxis.x * sd * off, z: a.z + xAxis.z * sd * off }
-      return Math.max(0, -gateDepth(p) / Math.max(0.5, G.cos)) + 0.1
-    }
-    const vaultStart = startFor(half + 0.8) + 0.1
+    })
 
-    // 隧道拱頂與側牆
-    const segLen = 4
-    const n = Math.ceil(len / segLen)
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0xe9e4da, side: THREE.DoubleSide })
+    // 隧道拱頂與側牆：沿折線逐段擺放；每段多延伸一點，轉彎外側才不會露縫。
+    // 拱頂與側牆投射陰影，避免陽光穿過拱頂把山坡的鋸齒影子打在隧道地面上。
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0xe9e4da, emissive: 0x4a463f, side: THREE.DoubleSide })
     const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff1c9 })
     const vault = new THREE.Shape()
     vault.absarc(0, 0, half + 0.8, 0, Math.PI, false)
     vault.lineTo(-half, 0)
     vault.absarc(0, 0, half, Math.PI, 0, true)
     vault.closePath()
-    for (let i = 0; i < n; i++) {
-      const s0 = (i * len) / n
-      const s1 = ((i + 1) * len) / n
-      const seg = (from: number, to: number, build: (g: THREE.Group, l: number) => void) => {
-        if (to - from < 0.05) return
-        const sm = (from + to) / 2
-        const c = { x: a.x + dir.x * sm, z: a.z + dir.z * sm }
-        const g = new THREE.Group()
-        build(g, to - from)
-        g.position.set(c.x, groundHeight(c.x, c.z), c.z)
-        g.rotation.y = yaw
-        this.scene.add(g)
+    const pieces: { p0: Vec2; p1: Vec2 }[] = []
+    for (let i = 1; i < P.length; i++) {
+      const q = P[i - 1]
+      const r = P[i]
+      const l = Math.hypot(r.x - q.x, r.z - q.z)
+      const k = Math.max(1, Math.ceil(l / 4))
+      for (let j = 0; j < k; j++) {
+        const t0 = j / k
+        const t1 = (j + 1) / k
+        pieces.push({ p0: { x: q.x + (r.x - q.x) * t0, z: q.z + (r.z - q.z) * t0 }, p1: { x: q.x + (r.x - q.x) * t1, z: q.z + (r.z - q.z) * t1 } })
       }
-      seg(Math.max(s0, vaultStart), s1, (g, l) => {
-        const geo = new THREE.ExtrudeGeometry(vault, { depth: l + 0.05, bevelEnabled: false, curveSegments: 16 })
-        geo.translate(0, 0, -(l + 0.05) / 2)
+    }
+    // 第一段從校門立面後 0.1 m 起算（門洞內是拱門自己的內壁）
+    {
+      const f = pieces[0]
+      const l = Math.hypot(f.p1.x - f.p0.x, f.p1.z - f.p0.z)
+      const k = 0.1 / l
+      f.p0 = { x: f.p0.x + (f.p1.x - f.p0.x) * k, z: f.p0.z + (f.p1.z - f.p0.z) * k }
+    }
+    this.capture('obj:tunnel', '隧道', '', 'none', () => {
+      pieces.forEach(({ p0, p1 }, i) => {
+        const l = Math.hypot(p1.x - p0.x, p1.z - p0.z)
+        if (l < 0.05) return
+        const yawP = Math.atan2(-(p1.x - p0.x) / l, -(p1.z - p0.z) / l)
+        const first = i === 0
+        const lastP = i === pieces.length - 1
+        // 首段不往門外延伸，末段不往出口外延伸
+        const ext0 = first ? 0 : 0.25
+        const ext1 = lastP ? 0 : 0.25
+        const L = l + ext0 + ext1
+        const mid = (l + ext1 - ext0) / 2
+        const dx = (p1.x - p0.x) / l
+        const dz = (p1.z - p0.z) / l
+        const c = { x: p0.x + dx * mid, z: p0.z + dz * mid }
+        const g = new THREE.Group()
+        const geo = new THREE.ExtrudeGeometry(vault, { depth: L, bevelEnabled: false, curveSegments: 16 })
+        geo.translate(0, 0, -L / 2)
         const v = new THREE.Mesh(geo, wallMat)
         v.position.y = 4.6
-        v.receiveShadow = true
+        v.name = 'tunnel-vault'
+        v.castShadow = v.receiveShadow = true
         g.add(v)
+        this.occluders.push(v)
         if (i % 2 === 0) {
           const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, Math.min(1.6, l)), lightMat)
           lamp.position.set(0, 4.6 + half - 0.08, 0)
           g.add(lamp)
         }
-      })
-      for (const sd of [-1, 1]) {
-        seg(Math.max(s0, sideStart(sd, half + 0.8)), s1, (g, l) => {
-          const wall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 6.6, l + 0.05), wallMat)
+        for (const sd of [-1, 1]) {
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 6.6, L), wallMat)
           wall.position.set(sd * (half + 0.4), 1.3, 0)
+          wall.castShadow = wall.receiveShadow = true
           g.add(wall)
-        })
-      }
-    }
+          this.occluders.push(wall)
+        }
+        g.position.set(c.x, groundHeight(c.x, c.z), c.z)
+        g.rotation.y = yawP
+        this.scene.add(g)
+      })
+    })
   }
 
   private addStage(): void {
@@ -1128,11 +1257,11 @@ export class CampusWorld {
         scene.add(en)
       }
     }
-    cyl(R.box.x0 + 1.2, (R.box.z0 + R.box.z1) / 2, 3.6, R.h + 2)
-    cyl(-4, -20, 3.9, S.h - 2, 'sign')
+    this.capture('obj:R-tower', '舍我樓 R 圓柱樓梯塔', '', 'ground', () => cyl(R.box.x0 + 1.2, (R.box.z0 + R.box.z1) / 2, 3.6, R.h + 2))
+    this.capture('obj:S-tower', '舍我樓 S 圓柱塔（招牌）', '', 'ground', () => cyl(-4, -20, 3.9, S.h - 2, 'sign'))
 
     // 八方廣場旁的紅橘色四層小塔，頂部尖頂（0034_72、0042_144）
-    {
+    this.capture('obj:red-tower', '紅色小塔', '', 'ground', () => {
       const x = -100
       const z = -14
       const y = at(x, z)
@@ -1155,10 +1284,10 @@ export class CampusWorld {
       this.occluders.push(body)
       scene.add(g)
       this.obstacles.push({ x, z, r: 2.8 })
-    }
+    })
 
     // 山坡上的紅色八角涼亭（0034_95、0034_124）
-    {
+    this.capture('obj:pavilion', '紅色八角涼亭', '', 'terrain', () => {
       const x = -30
       const z = 12
       const y = terrainHeight(x, z)
@@ -1178,10 +1307,10 @@ export class CampusWorld {
       g.traverse(o => (o.castShadow = true))
       g.position.set(x, y, z)
       scene.add(g)
-    }
+    })
 
     // 通識大樓面向言論廣場的圓形雨遮（0042_144）
-    {
+    this.capture('obj:G-canopy', '通識大樓圓形雨遮', '', 'ground', () => {
       const G = buildingById('G')
       const sp = centroid(AREAS.find(a => a.id === 'speech')!.pts)
       const f = faceToward(G.pts, sp)
@@ -1201,10 +1330,10 @@ export class CampusWorld {
         post.position.set(px, y + 2.3, pz)
         scene.add(post)
       }
-    }
+    })
 
     // 女一舍面向隧道坡道的綠色頂棚樓梯（0042_164）
-    {
+    this.capture('obj:D2-canopy', '綠色頂棚樓梯', '', 'ground', () => {
       const D2 = buildingById('D2')
       const tunnelExit = TUNNEL.pts[TUNNEL.pts.length - 1]
       const f = faceToward(D2.pts, tunnelExit)
@@ -1228,10 +1357,10 @@ export class CampusWorld {
       g.rotation.y = f.yaw + Math.PI / 2
       g.traverse(o => (o.castShadow = true))
       scene.add(g)
-    }
+    })
 
     // 新聞大樓臨木柵路的白色斜坡格柵牆（0034_26）
-    {
+    this.capture('obj:J-grille', '新聞大樓格柵牆', '', 'ground', () => {
       const J = buildingById('J')
       const f = faceToward(J.pts, { x: J.c.x, z: J.c.z + 100 })
       const len = Math.min(f.len, 40)
@@ -1256,7 +1385,7 @@ export class CampusWorld {
       m.rotateX(-0.75)
       m.receiveShadow = true
       scene.add(m)
-    }
+    })
 
     // 地形範圍外的市區地面，避免道路懸空、邊緣露出背景
     {
@@ -1301,6 +1430,7 @@ export class CampusWorld {
   }
 
   private addStreetDressing(): void {
+    this.capture('obj:sign-muzha', '路牌：木柵路一段', '', 'ground', () => {
     const sign = this.signPlane(signTexture('木柵路一段', { color: '#ffffff', bg: '#2f6a46', size: 120 }), 4.8, 1.2)
     // 路牌立在校門西側人行道，不擋住校門正面
     const T = GATE_FRAME.tan
@@ -1312,16 +1442,19 @@ export class CampusWorld {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4), new THREE.MeshLambertMaterial({ color: 0x777777 }))
     pole.position.set(p.x, y + 2, p.z - 0.1)
     this.scene.add(pole)
+    })
+    this.capture('obj:sign-shiyuan', '路牌：試院路', '', 'ground', () => {
     const shi = this.signPlane(signTexture('試院路', { color: '#ffffff', bg: '#2f6a46', size: 120 }), 3.6, 1)
     const q = { x: BACK_GATE.x + 3, z: BACK_GATE.z - 7 }
     shi.position.set(q.x, groundHeight(q.x, q.z) + 3.6, q.z)
     this.scene.add(shi)
+    })
   }
 
   // ─── 植栽 ─────────────────────────────────────────
   private addTrees(): void {
     const r = rng(42)
-    const trees: { x: number; z: number; s: number; palm?: boolean }[] = []
+    const trees: { x: number; z: number; s: number; palm?: boolean; obs?: Obstacle }[] = []
     // 山坡樹林
     // 依正射影像樹冠遮罩種樹：只長在航照上有樹冠、且不是步道／建物／場地的位置
     const noTree = AREAS.filter(a => a.kind === 'sports' || a.kind === 'court' || a.kind === 'field' || a.kind === 'plaza')
@@ -1344,16 +1477,18 @@ export class CampusWorld {
       } else if (insideSolid(p, 1.5)) continue
       trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : 1.0 + r() * 1.0 })
     }
-    // 學校廣場樹陣（避開主動線、舞台與後校門步道）
-    const plaza = AREAS.find(a => a.id === 'school-plaza')!
-    for (let x = 0; x < 120; x += 9) {
-      for (let z = -80; z < 20; z += 9) {
-        const p = { x: x + (r() - 0.5) * 2, z: z + (r() - 0.5) * 2 }
-        if (!pointInPolygon(p, plaza.pts)) continue
-        if (distToPolyline(p, ROUTE) < 5 || Math.hypot(p.x - STAGE.x, p.z - STAGE.z) < STAGE.r + 5) continue
-        if (pathAt(p) || insideSolid(p, 3)) continue
-        trees.push({ x: p.x, z: p.z, s: 0.8 + r() * 0.3 })
-        this.obstacles.push({ x: p.x, z: p.z, r: 0.5 })
+    // 學校廣場樹陣：0052_059 空拍為大禮堂前西側的規則格狀樹陣（plazaSurvey.ts）
+    {
+      const tg = PLAZA_SURVEY.treeGrid
+      for (let x = tg.x0; x <= tg.x1 + 0.01; x += tg.step) {
+        for (let z = tg.z0; z <= tg.z1 + 0.01; z += tg.step) {
+          const p = { x, z }
+          if (distToPolyline(p, ROUTE) < 2.5 || Math.hypot(p.x - STAGE.x, p.z - STAGE.z) < STAGE.r + 3) continue
+          if (insideSolid(p, 2)) continue
+          const obs = { x, z, r: 0.5 }
+          trees.push({ x, z, s: 0.85 + r() * 0.2, obs })
+          this.obstacles.push(obs)
+        }
       }
     }
     // 操場北緣的大王椰子
@@ -1368,8 +1503,9 @@ export class CampusWorld {
         const side = n.z < 0 ? 1 : -1
         const q = { x: pts[i].x + n.x * side * 2.6, z: pts[i].z + n.z * side * 2.6 }
         if (insideSolid(q, 1) || !onPaved(q)) continue
-        trees.push({ x: q.x, z: q.z, s: 1, palm: true })
-        this.obstacles.push({ x: q.x, z: q.z, r: 0.4 })
+        const obs = { x: q.x, z: q.z, r: 0.4 }
+        trees.push({ x: q.x, z: q.z, s: 1, palm: true, obs })
+        this.obstacles.push(obs)
       }
     }
 
@@ -1380,16 +1516,61 @@ export class CampusWorld {
     const m = new THREE.Matrix4()
     const q = new THREE.Quaternion()
     const col = new THREE.Color()
+    const usedIds = new Set<string>()
+    const idFor = (kind: string, x: number, z: number) => {
+      let id = `${kind}@${x.toFixed(1)},${z.toFixed(1)}`
+      while (usedIds.has(id)) id += '+'
+      usedIds.add(id)
+      return id
+    }
+    const treeIds: string[] = []
     normal.forEach((t, i) => {
-      const y = terrainHeight(t.x, t.z)
-      m.compose(new THREE.Vector3(t.x, y + 1.5 * t.s, t.z), q.identity(), new THREE.Vector3(t.s, t.s, t.s))
-      trunk.setMatrixAt(i, m)
       const sy = t.s * (0.9 + r() * 0.5)
-      m.compose(new THREE.Vector3(t.x, y + 3 * t.s + 1.6 * sy, t.z), q.setFromEuler(new THREE.Euler(0, r() * 6, 0)), new THREE.Vector3(t.s * 1.1, sy, t.s * 1.1))
-      crown.setMatrixAt(i, m)
+      const spin = r() * 6
+      const place = (x: number, z: number, rot: number) => {
+        const y = terrainHeight(x, z)
+        m.compose(new THREE.Vector3(x, y + 1.5 * t.s, z), q.identity(), new THREE.Vector3(t.s, t.s, t.s))
+        trunk.setMatrixAt(i, m)
+        m.compose(new THREE.Vector3(x, y + 3 * t.s + 1.6 * sy, z), q.setFromEuler(new THREE.Euler(0, spin + rot, 0)), new THREE.Vector3(t.s * 1.1, sy, t.s * 1.1))
+        crown.setMatrixAt(i, m)
+      }
+      place(t.x, t.z, 0)
       col.setHSL(0.24 + r() * 0.08, 0.45 + r() * 0.2, 0.24 + r() * 0.12)
       crown.setColorAt(i, col)
+      const id = idFor('tree', t.x, t.z)
+      treeIds.push(id)
+      const top = 3 * t.s + 3.2 * sy
+      const mv: Movable = {
+        id,
+        kind: 'tree',
+        label: '樹木',
+        home: { x: t.x, z: t.z },
+        edit: { dx: 0, dz: 0, rot: 0 },
+        dataLevel: false,
+        apply: e => {
+          mv.edit = { ...e }
+          const x = t.x + e.dx
+          const z = t.z + e.dz
+          place(x, z, e.rot)
+          if (t.obs) {
+            t.obs.x = x
+            t.obs.z = z
+          }
+          trunk.instanceMatrix.needsUpdate = crown.instanceMatrix.needsUpdate = true
+          trunk.boundingSphere = crown.boundingSphere = null
+        },
+        bounds: b => {
+          const x = t.x + mv.edit.dx
+          const z = t.z + mv.edit.dz
+          const y = terrainHeight(x, z)
+          const rr = 2.6 * t.s
+          return b.set(new THREE.Vector3(x - rr, y, z - rr), new THREE.Vector3(x + rr, y + top, z + rr))
+        },
+      }
+      this.movables.add(mv)
     })
+    this.movables.addInstanced(trunk, treeIds)
+    this.movables.addInstanced(crown, treeIds)
     trunk.castShadow = crown.castShadow = true
     crown.receiveShadow = true
     this.scene.add(trunk, crown)
@@ -1397,13 +1578,48 @@ export class CampusWorld {
     if (palms.length) {
       const pTrunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.2, 0.28, 10, 6), new THREE.MeshLambertMaterial({ color: 0x9a8f7f }), palms.length)
       const pCrown = new THREE.InstancedMesh(new THREE.ConeGeometry(2.0, 1.1, 7, 1, true), new THREE.MeshLambertMaterial({ color: 0x6fb04a, side: THREE.DoubleSide }), palms.length)
+      const palmIds: string[] = []
       palms.forEach((t, i) => {
-        const y = groundHeight(t.x, t.z)
-        m.compose(new THREE.Vector3(t.x, y + 5, t.z), q.identity(), new THREE.Vector3(1, 1, 1))
-        pTrunk.setMatrixAt(i, m)
-        m.compose(new THREE.Vector3(t.x, y + 9.8, t.z), q.setFromEuler(new THREE.Euler(Math.PI, i, 0)), new THREE.Vector3(1, 1, 1))
-        pCrown.setMatrixAt(i, m)
+        const place = (x: number, z: number, rot: number) => {
+          const y = groundHeight(x, z)
+          m.compose(new THREE.Vector3(x, y + 5, z), q.identity(), new THREE.Vector3(1, 1, 1))
+          pTrunk.setMatrixAt(i, m)
+          m.compose(new THREE.Vector3(x, y + 9.8, z), q.setFromEuler(new THREE.Euler(Math.PI, i + rot, 0)), new THREE.Vector3(1, 1, 1))
+          pCrown.setMatrixAt(i, m)
+        }
+        place(t.x, t.z, 0)
+        const id = idFor('palm', t.x, t.z)
+        palmIds.push(id)
+        const mv: Movable = {
+          id,
+          kind: 'palm',
+          label: '大王椰子',
+          home: { x: t.x, z: t.z },
+          edit: { dx: 0, dz: 0, rot: 0 },
+          dataLevel: false,
+          apply: e => {
+            mv.edit = { ...e }
+            const x = t.x + e.dx
+            const z = t.z + e.dz
+            place(x, z, e.rot)
+            if (t.obs) {
+              t.obs.x = x
+              t.obs.z = z
+            }
+            pTrunk.instanceMatrix.needsUpdate = pCrown.instanceMatrix.needsUpdate = true
+            pTrunk.boundingSphere = pCrown.boundingSphere = null
+          },
+          bounds: b => {
+            const x = t.x + mv.edit.dx
+            const z = t.z + mv.edit.dz
+            const y = groundHeight(x, z)
+            return b.set(new THREE.Vector3(x - 2, y, z - 2), new THREE.Vector3(x + 2, y + 10.5, z + 2))
+          },
+        }
+        this.movables.add(mv)
       })
+      this.movables.addInstanced(pTrunk, palmIds)
+      this.movables.addInstanced(pCrown, palmIds)
       pTrunk.castShadow = pCrown.castShadow = true
       this.scene.add(pTrunk, pCrown)
     }
@@ -1423,15 +1639,94 @@ export class CampusWorld {
     const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.1, 4.2, 6), new THREE.MeshLambertMaterial({ color: 0x2f2f33 }), spots.length)
     const head = new THREE.InstancedMesh(new THREE.SphereGeometry(0.28, 10, 8), new THREE.MeshBasicMaterial({ color: 0xfff3d2 }), spots.length)
     const m = new THREE.Matrix4()
+    const ids: string[] = []
     spots.forEach((p, i) => {
-      const y = groundHeight(p.x, p.z)
-      m.makeTranslation(p.x, y + 2.1, p.z)
-      pole.setMatrixAt(i, m)
-      m.makeTranslation(p.x, y + 4.3, p.z)
-      head.setMatrixAt(i, m)
-      this.obstacles.push({ x: p.x, z: p.z, r: 0.2 })
+      const place = (x: number, z: number) => {
+        const y = groundHeight(x, z)
+        m.makeTranslation(x, y + 2.1, z)
+        pole.setMatrixAt(i, m)
+        m.makeTranslation(x, y + 4.3, z)
+        head.setMatrixAt(i, m)
+      }
+      place(p.x, p.z)
+      const obs = { x: p.x, z: p.z, r: 0.2 }
+      this.obstacles.push(obs)
+      const id = `lamp@${p.x.toFixed(1)},${p.z.toFixed(1)}`
+      ids.push(id)
+      const mv: Movable = {
+        id,
+        kind: 'lamp',
+        label: '路燈',
+        home: { x: p.x, z: p.z },
+        edit: { dx: 0, dz: 0, rot: 0 },
+        dataLevel: false,
+        apply: e => {
+          mv.edit = { ...e }
+          obs.x = p.x + e.dx
+          obs.z = p.z + e.dz
+          place(obs.x, obs.z)
+          pole.instanceMatrix.needsUpdate = head.instanceMatrix.needsUpdate = true
+          pole.boundingSphere = head.boundingSphere = null
+        },
+        bounds: b => {
+          const y = groundHeight(obs.x, obs.z)
+          return b.set(new THREE.Vector3(obs.x - 0.5, y, obs.z - 0.5), new THREE.Vector3(obs.x + 0.5, y + 4.7, obs.z + 0.5))
+        },
+      }
+      this.movables.add(mv)
     })
+    this.movables.addInstanced(pole, ids)
+    this.movables.addInstanced(head, ids)
     this.scene.add(pole, head)
+  }
+
+  /** 學校廣場東側咖啡座陽傘與西北角綠色玻璃雨棚（0052_059、0086、0096 空拍） */
+  private addPlazaFurniture(): void {
+    const U = PLAZA_SURVEY.umbrellas
+    const canvasMat = new THREE.MeshLambertMaterial({ color: 0xf1ede4, side: THREE.DoubleSide })
+    const poleMat = new THREE.MeshLambertMaterial({ color: 0x6c6c6c })
+    const tableMat = new THREE.MeshLambertMaterial({ color: 0x8a6a4c })
+    let k = 0
+    for (let x = U.x0; x <= U.x1 + 0.01; x += U.step) {
+      const p = { x, z: U.z }
+      if (insideSolid(p, 1)) continue
+      k++
+      this.capture(`obj:umbrella-${k}`, `咖啡座陽傘 ${k}`, '', 'ground', () => {
+        const y = groundHeight(p.x, p.z)
+        const g = new THREE.Group()
+        const top = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 8, 1, true), canvasMat)
+        top.position.y = 2.6
+        const pl = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6), poleMat)
+        pl.position.y = 1.3
+        const tb = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.06, 12), tableMat)
+        tb.position.y = 0.75
+        g.add(top, pl, tb)
+        g.traverse(o => (o.castShadow = true))
+        g.position.set(p.x, y, p.z)
+        this.scene.add(g)
+        this.obstacles.push({ x: p.x, z: p.z, r: 0.6 })
+      })
+    }
+    const C = PLAZA_SURVEY.canopy
+    this.capture('obj:plaza-canopy', '學校廣場綠色玻璃雨棚', '', 'ground', () => {
+      const y = groundHeight(C.x, C.z)
+      const g = new THREE.Group()
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(C.w, 0.2, C.d), new THREE.MeshLambertMaterial({ color: 0x5fae8c, transparent: true, opacity: 0.75 }))
+      glass.position.y = 3.6
+      glass.rotation.x = 0.1
+      g.add(glass)
+      const frame = new THREE.MeshLambertMaterial({ color: 0xe8e8e4 })
+      for (const sx of [-1, 1])
+        for (const sz of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.6), frame)
+          post.position.set(sx * (C.w / 2 - 0.4), 1.8 - sz * 0.45, sz * (C.d / 2 - 0.4))
+          g.add(post)
+        }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(C.x, y, C.z)
+      g.rotation.y = C.rot
+      this.scene.add(g)
+    })
   }
 
   private addRouteArrows(): void {

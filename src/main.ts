@@ -100,7 +100,7 @@ function boot(): void {
       a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 2000)
       navigator.clipboard?.writeText(json).catch(() => {})
-      u.toast(`已匯出 ${editor.editedCount} 棟建築的新座標（也複製到剪貼簿）`, 3500)
+      u.toast(`已匯出 ${editor.editedCount} 個物件的新座標（也複製到剪貼簿）`, 3500)
     },
     editImport: text => {
       try {
@@ -117,7 +117,7 @@ function boot(): void {
   u.setMode('walk')
   editor = new BuildingEditor(canvas, explorer.camera, world, {
     change: (sel, count) =>
-      u.setEditInfo(sel ? { num: sel.b.num, name: sel.b.name, dx: sel.total.dx, dz: sel.total.dz, rotDeg: (sel.total.rot * 180) / Math.PI } : null, count),
+      u.setEditInfo(sel ? { num: sel.num, name: sel.label, kind: sel.kind, dataLevel: sel.dataLevel, dx: sel.total.dx, dz: sel.total.dz, rotDeg: (sel.total.rot * 180) / Math.PI } : null, count),
   })
   const loadedCount = Object.keys(LOADED_EDITS).length
   if (loadedCount) {

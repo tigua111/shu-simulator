@@ -60,19 +60,66 @@ try {
   if (!moved.ls) fail('not saved')
   await page.click('[data-edit-rot="15"]')
   await page.screenshot({ path: `${out}/e1-dragged.png` })
+  // 其他物件：樹（學校廣場樹陣）、路燈、前校門
+  const dragObj = async (pick, shot) => {
+    const t = await page.evaluate(pick => {
+      const { explorer, world } = window.__campus
+      const ids = [...world.movables.items.keys()]
+      const id = ids.find(i => i.startsWith(pick)) ?? pick
+      const m = world.movables.items.get(id)
+      const THREE_Box = world.scene.children.find(o => o.type === 'Box3Helper').box.constructor
+      const box = m.bounds(new THREE_Box())
+      const c = { x: (box.min.x + box.max.x) / 2, y: box.max.y - 0.3, z: (box.min.z + box.max.z) / 2 }
+      explorer.orbit.target.set(c.x, c.y - 10, c.z)
+      explorer.camera.position.set(c.x, c.y + 60, c.z + 6)
+      explorer.orbit.update()
+      for (let i = 0; i < 30; i++) explorer.update(0.05)
+      explorer.camera.updateMatrixWorld()
+      const v = explorer.camera.position.clone().set(c.x, c.y, c.z).project(explorer.camera)
+      return { id, x: (v.x + 1) * 640, y: (1 - v.y) * 360, edit: { ...m.edit } }
+    }, pick)
+    await page.waitForTimeout(300)
+    await page.mouse.move(t.x, t.y)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) await page.mouse.move(t.x + i * 6, t.y + i * 2)
+    await page.mouse.up()
+    const r = await page.evaluate(id => {
+      const { world } = window.__campus
+      const m = world.movables.items.get(id)
+      return { edit: m.edit, name: document.querySelector('[data-edit-name]').textContent }
+    }, t.id)
+    console.log('drag', t.id, JSON.stringify(r))
+    if (Math.hypot(r.edit.dx, r.edit.dz) < 1) fail(`${t.id} did not move`)
+    await page.screenshot({ path: `${out}/${shot}.png` })
+    return t.id
+  }
+  const treeId = await dragObj('tree@58.0,-28.0', 'e1b-tree')
+  const lampId = await dragObj('lamp@', 'e1c-lamp')
+  const gateId = await dragObj('obj:gate', 'e1d-gate')
+  const obsFollow = await page.evaluate(id => {
+    const { world } = window.__campus
+    const m = world.movables.items.get(id)
+    const p = { x: m.home.x + m.edit.dx, z: m.home.z + m.edit.dz }
+    return world.obstacles.some(o => Math.hypot(o.x - p.x, o.z - p.z) < 0.01)
+  }, lampId)
+  if (!obsFollow) fail('lamp obstacle did not follow')
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-edit-export]')])
   const file = `${out}/export.json`
   await dl.saveAs(file)
   const ex = JSON.parse(readFileSync(file, 'utf8'))
   console.log('export', JSON.stringify(ex.buildings.map(b => ({ id: b.id, name: b.name, dx: b.dx, dz: b.dz, rotDeg: b.rotDeg, ll0: b.lonlat[0] }))))
   if (ex.buildings.length !== 1 || Math.abs(ex.buildings[0].rotDeg - 15) > 0.01) fail('export content')
+  console.log('export objects', JSON.stringify(ex.objects.map(o => ({ id: o.id, x: o.x, z: o.z }))))
+  if (ex.objects.length !== 3) fail('export objects count ' + ex.objects.length)
   await page.reload()
   await page.waitForSelector('body.is-ready .start.is-open', { timeout: 40_000 })
   const after = await page.evaluate(id => {
     const p = window.__campus.world.buildingPivots.get(id)
-    return { x: p.position.x, z: p.position.z }
+    const objs = Object.fromEntries([...window.__campus.world.movables.items.values()].filter(m => m.kind !== 'building' && (m.edit.dx || m.edit.dz)).map(m => [m.id, m.edit]))
+    return { x: p.position.x, z: p.position.z, objs }
   }, a.id)
-  console.log('after reload', after)
+  console.log('after reload', JSON.stringify(after))
+  for (const id of [treeId, lampId, gateId]) if (!after.objs[id]) fail('reload lost ' + id)
   if (Math.hypot(after.x - moved.x, after.z - moved.z) > 0.5) fail('reload did not keep position')
   await page.click('[data-start="overview"]')
   await page.click('[data-edit-toggle]')

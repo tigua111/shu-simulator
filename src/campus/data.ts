@@ -8,6 +8,7 @@ import { SITE } from './site'
 import type { AreaKind, BuildingStyle, P2, PathKind, SiteBuilding } from './siteTypes'
 import { APPEARANCE, type RoofKind } from './appearance'
 import { LOADED_EDITS, transformPoint } from './edits'
+import { SURVEY_HOUSES } from './plazaSurvey'
 
 export type { BuildingStyle, PathKind, AreaKind, RoofKind }
 export type Vec2 = { x: number; z: number }
@@ -29,7 +30,12 @@ export interface Building extends Omit<SiteBuilding, 'poly' | 'ground'> {
   roof: RoofKind
 }
 export interface Neighbor {
+  /** 可移動物件 id（nb:o<osm> 或 nb:s<實測編號>） */
+  id: string
   osm: number
+  /** 實測補上的民宅編號（OSM 鄰房為空） */
+  sid?: string
+  roof?: number
   h: number
   pts: Vec2[]
   box: Box
@@ -94,9 +100,106 @@ export const BUILDINGS: Building[] = SITE.buildings.map(b => {
     box: polyBox(pts),
   }
 })
-export const NEIGHBORS: Neighbor[] = SITE.neighbors.map(n => {
-  const pts = n.poly.map(v)
-  return { osm: n.osm, h: n.h, pts, box: polyBox(pts) }
+const inPoly = (p: Vec2, poly: Vec2[]): boolean => {
+  let c = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]
+    const b = poly[j]
+    if (a.z > p.z !== b.z > p.z && p.x < ((b.x - a.x) * (p.z - a.z)) / (b.z - a.z) + a.x) c = !c
+  }
+  return c
+}
+const RAW_PATHS = SITE.paths.map(p => ({ w: p.w, pts: p.pts.map(v) }))
+/** 離道路／步道中心線小於半寬＋0.8 m 視為壓到路面 */
+const onRoad = (p: Vec2): boolean =>
+  RAW_PATHS.some(pa => {
+    for (let i = 1; i < pa.pts.length; i++) {
+      const q = pa.pts[i - 1]
+      const r = pa.pts[i]
+      const vx = r.x - q.x
+      const vz = r.z - q.z
+      const l2 = vx * vx + vz * vz || 1
+      const t = Math.max(0, Math.min(1, ((p.x - q.x) * vx + (p.z - q.z) * vz) / l2))
+      if (Math.hypot(p.x - q.x - t * vx, p.z - q.z - t * vz) < pa.w / 2 + 0.8) return true
+    }
+    return false
+  })
+/**
+ * 學校廣場周邊依 0052 空拍描出的民宅（plazaSurvey.ts）。
+ * 空拍屋頂有透視位移，壓到 OSM 道路的角點往質心內收；仍有六成以上落在路面的房子略過。
+ */
+/** Sutherland–Hodgman：保留 n·(p − o) ≥ 0 的一側 */
+function clipHalf(poly: Vec2[], o: Vec2, n: Vec2): Vec2[] {
+  const f = (p: Vec2) => n.x * (p.x - o.x) + n.z * (p.z - o.z)
+  const out: Vec2[] = []
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]
+    const b = poly[(i + 1) % poly.length]
+    const fa = f(a)
+    const fb = f(b)
+    if (fa >= 0) out.push(a)
+    if (fa >= 0 !== fb >= 0) {
+      const t = fa / (fa - fb)
+      out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })
+    }
+  }
+  return out
+}
+const SURVEYED: Neighbor[] = SURVEY_HOUSES.flatMap(h => {
+  let pts = h.poly.map(v)
+  // 與道路相交者，沿路緣切開，保留原質心那一側
+  for (const pa of RAW_PATHS) {
+    for (let i = 1; i < pa.pts.length; i++) {
+      if (pts.length < 3) break
+      const q = pa.pts[i - 1]
+      const r = pa.pts[i]
+      const l = Math.hypot(r.x - q.x, r.z - q.z) || 1
+      const d = { x: (r.x - q.x) / l, z: (r.z - q.z) / l }
+      let n = { x: -d.z, z: d.x }
+      const half = pa.w / 2 + 0.8
+      // 只處理在此路段範圍內有交疊的情形
+      const along = pts.map(p => (p.x - q.x) * d.x + (p.z - q.z) * d.z)
+      if (Math.max(...along) < -half || Math.min(...along) > l + half) continue
+      const side = pts.map(p => (p.x - q.x) * n.x + (p.z - q.z) * n.z)
+      if (Math.min(...side) > half || Math.max(...side) < -half) continue
+      const c = centroid(pts)
+      if ((c.x - q.x) * n.x + (c.z - q.z) * n.z < 0) n = { x: -n.x, z: -n.z }
+      pts = clipHalf(pts, { x: q.x + n.x * half, z: q.z + n.z * half }, n)
+    }
+  }
+  if (pts.length < 3) return []
+  const box = polyBox(pts)
+  let tot = 0
+  let bad = 0
+  for (let x = box.x0; x <= box.x1; x += 1)
+    for (let z = box.z0; z <= box.z1; z += 1) {
+      const q = { x, z }
+      if (!inPoly(q, pts)) continue
+      tot++
+      if (onRoad(q)) bad++
+    }
+  if (!tot || bad / tot > 0.6) return []
+  return [{ id: `nb:s${h.id}`, osm: 0, sid: h.id, roof: h.roof, h: h.h, pts, box }]
+})
+/** 鄰房原始輪廓（未套用編輯），供匯出 */
+export const ORIGINAL_NEIGHBOR_POLYS: Record<string, Vec2[]> = {}
+export const NEIGHBORS: Neighbor[] = [
+  // OSM 鄰房中與實測民宅重疊者以實測為準
+  ...SITE.neighbors
+    .map((n, i) => {
+      const pts = n.poly.map(v)
+      return { id: `nb:o${n.osm || 'i' + i}`, osm: n.osm, h: n.h, pts, box: polyBox(pts) }
+    })
+    .filter(n => !SURVEYED.some(s => inPoly(centroid(n.pts), s.pts) || n.pts.some(p => inPoly(p, s.pts)) || s.pts.some(p => inPoly(p, n.pts)))),
+  ...SURVEYED,
+].map(n => {
+  ORIGINAL_NEIGHBOR_POLYS[n.id] = n.pts
+  // 編輯模式保存的調整：與建築相同，繞原始質心旋轉後平移，碰撞與地形依新位置重建
+  const e = LOADED_EDITS[n.id]
+  if (!e) return n
+  const c0 = centroid(n.pts)
+  const pts = n.pts.map(p => transformPoint(p, c0, e))
+  return { ...n, pts, box: polyBox(pts) }
 })
 export const PATHS: PathLine[] = SITE.paths.map(p => ({ id: p.id, kind: p.kind, w: p.w, pts: p.pts.map(v) }))
 export const AREAS: Area[] = SITE.areas.map(a => ({ id: a.id, kind: a.kind, pts: a.poly.map(v) }))
@@ -107,13 +210,72 @@ export const ORIGIN = SITE.origin
 export const ORIGINAL_POLYS: Record<string, Vec2[]> = Object.fromEntries(SITE.buildings.map(b => [b.id, b.poly.map(v)]))
 
 export const TUNNEL = PATHS.find(p => p.kind === 'tunnel')!
+/**
+ * 前校門立面法線（指向門內）：立面平行最近的木柵路路段。
+ * 隧道原為斜交校門 36° 的直線；改為先垂直校門直行 12 m，再以平順曲線轉向原出口，讓拱門開口正對隧道。
+ */
+export const GATE_NORMAL: Vec2 = (() => {
+  const a = TUNNEL.pts[0]
+  const b = TUNNEL.pts[TUNNEL.pts.length - 1]
+  let best = Infinity
+  let tan = { x: 1, z: 0 }
+  for (const p of PATHS) {
+    if (p.kind !== 'road') continue
+    for (let i = 1; i < p.pts.length; i++) {
+      const q = p.pts[i - 1]
+      const r = p.pts[i]
+      const vx = r.x - q.x
+      const vz = r.z - q.z
+      const l2 = vx * vx + vz * vz || 1
+      const t = Math.max(0, Math.min(1, ((a.x - q.x) * vx + (a.z - q.z) * vz) / l2))
+      const d = Math.hypot(a.x - q.x - t * vx, a.z - q.z - t * vz)
+      if (d < best) {
+        best = d
+        const l = Math.sqrt(l2)
+        tan = { x: vx / l, z: vz / l }
+      }
+    }
+  }
+  let n = { x: -tan.z, z: tan.x }
+  if (n.x * (b.x - a.x) + n.z * (b.z - a.z) < 0) n = { x: -n.x, z: -n.z }
+  return n
+})()
+export const TUNNEL_STRAIGHT = 12
+{
+  const a = TUNNEL.pts[0]
+  const b = TUNNEL.pts[TUNNEL.pts.length - 1]
+  const n = GATE_NORMAL
+  const p1 = { x: a.x + n.x * TUNNEL_STRAIGHT, z: a.z + n.z * TUNNEL_STRAIGHT }
+  // 二次貝茲：起點切線沿校門法線，終點落在原出口
+  const ctrl = { x: p1.x + n.x * 22, z: p1.z + n.z * 22 }
+  const pts: Vec2[] = [{ ...a }, p1]
+  const N = 14
+  for (let i = 1; i <= N; i++) {
+    const t = i / N
+    const u = 1 - t
+    pts.push({ x: u * u * p1.x + 2 * u * t * ctrl.x + t * t * b.x, z: u * u * p1.z + 2 * u * t * ctrl.z + t * t * b.z })
+  }
+  TUNNEL.pts.splice(0, TUNNEL.pts.length, ...pts)
+}
 export const TRACK = { x: SITE.track.center[0], z: SITE.track.center[1], rot: SITE.track.rot, len: SITE.track.len, w: SITE.track.w, lane: SITE.track.lane }
 export const STAGE = { x: SITE.stage.center[0], z: SITE.stage.center[1], r: SITE.stage.r }
 export const BACK_GATE = { x: SITE.backGate.center[0], z: SITE.backGate.center[1], dir: v(SITE.backGate.dir) }
 export const FRONT_GATE = { x: SITE.frontGate.center[0], z: SITE.frontGate.center[1], dir: v(SITE.frontGate.dir) }
 
 /** 主動線：前校門 → 隧道 → 八方廣場 → 舍我樓 → 學校廣場 → 大禮堂北側 → 操場 → 傳播大廈 C 棟 */
-export const ROUTE: Vec2[] = SITE.route.map(v)
+export const ROUTE: Vec2[] = (() => {
+  const raw = SITE.route.map(v)
+  const a = TUNNEL.pts[0]
+  const b = TUNNEL.pts[TUNNEL.pts.length - 1]
+  // 原路線：街口 → 斜向進門 → 隧道直線 → 出口；改為在木柵路上正對校門，沿隧道折線前進
+  const iExit = raw.findIndex(p => Math.hypot(p.x - b.x, p.z - b.z) < 1)
+  const n = GATE_NORMAL
+  const head = [
+    { x: a.x - n.x * 13, z: a.z - n.z * 13 },
+    { x: a.x - n.x * 6, z: a.z - n.z * 6 },
+  ]
+  return [...head, ...TUNNEL.pts.map(p => ({ ...p })), ...raw.slice(iExit + 1)]
+})()
 export const START: { pos: Vec2; yaw: number } = (() => {
   const p = ROUTE[0]
   const q = ROUTE[2]

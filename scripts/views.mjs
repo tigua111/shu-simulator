@@ -7,7 +7,7 @@ const url = `http://127.0.0.1:${port}/`
 const out = process.env.SHOTS_DIR ?? 'shots/views'
 mkdirSync(out, { recursive: true })
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { stdio: 'ignore' })
-const VIEWS = {
+const VIEWS = process.env.VIEWS_JSON ? JSON.parse(process.env.VIEWS_JSON) : {
   'v1-gate-0034_26': [[-235, 80, 160], [-215, 30, 80]],
   'v2-adm-east-0034_72': [[-150, 70, -5], [-40, 28, -20]],
   'v3-construction-0034_95': [[-115, 75, -45], [-45, 22, 8]],
@@ -47,6 +47,13 @@ try {
   await page.waitForTimeout(1500)
   await page.screenshot({ path: `${out}/v0-overview.png` })
   await page.addStyleTag({ content: '.hud,.panel,.minimap,.topbar,.brand,.modes,.index,.where,.hint{opacity:0.15!important}' })
+  if (process.env.HIDE)
+    await page.evaluate(names => {
+      const hide = new Set(names.split(','))
+      window.__campus.world.scene.traverse(o => {
+        if (hide.has(o.name)) o.visible = false
+      })
+    }, process.env.HIDE)
   for (const [name, [p, t]] of Object.entries(VIEWS)) {
     await page.evaluate(
       ([p, t]) => {

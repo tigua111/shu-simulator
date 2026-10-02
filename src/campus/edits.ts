@@ -1,5 +1,5 @@
 /**
- * 使用者在「編輯」模式中拖曳／旋轉建築的調整量。保存在瀏覽器 localStorage，
+ * 使用者在「編輯」模式中拖曳／旋轉物件（校舍、民宅、樹、路燈、構造物）的調整量。保存在瀏覽器 localStorage，
  * 啟動時套用到建築輪廓（相對原始資料：先繞原始質心旋轉，再平移）。
  */
 export interface Edit {
@@ -32,10 +32,11 @@ export function loadEdits(): Edits {
 export function sanitize(data: unknown): Edits {
   const out: Edits = {}
   if (!data || typeof data !== 'object') return out
-  // 接受 { id: edit } 或匯出檔格式 { buildings: [{ id, dx, dz, rotDeg }] }
-  const list = (data as { buildings?: unknown }).buildings
-  if (Array.isArray(list)) {
-    for (const b of list) {
+  // 接受 { id: edit } 或匯出檔格式 { buildings / neighbors / objects: [{ id, dx, dz, rotDeg }] }
+  const d = data as { buildings?: unknown; neighbors?: unknown; objects?: unknown }
+  const lists = [d.buildings, d.neighbors, d.objects].filter(Array.isArray) as unknown[][]
+  if (lists.length) {
+    for (const b of lists.flat()) {
       const o = b as Record<string, unknown>
       if (typeof o.id !== 'string') continue
       const e = { dx: Number(o.dx), dz: Number(o.dz), rot: (Number(o.rotDeg) * Math.PI) / 180 }

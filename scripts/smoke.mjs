@@ -74,7 +74,7 @@ try {
   await page.click('[data-start="walk"]')
   await page.waitForTimeout(1200)
   let s = await state(page)
-  check(s.mode === 'walk' && Math.abs(s.x + 241) < 1 && Math.abs(s.z - 109.5) < 1, `starts at the front gate on 木柵路 (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`)
+  check(s.mode === 'walk' && Math.hypot(s.x + 232.9, s.z - 86.5) < 20 && s.z > 90, `starts at the front gate on 木柵路 (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`)
   await shot(page, '02-gate')
 
   // 鍵盤前進：走到拱門口
@@ -83,28 +83,72 @@ try {
   await page.keyboard.up('KeyW')
   s = await state(page)
   check(s.z < 100, `W walks from the street to the gate arch (z=${s.z.toFixed(1)})`)
-  // 轉向隧道方向（東北）並穿過隧道
-  await page.evaluate(() => {
-    const { explorer } = window.__campus
-    explorer.teleport({ x: -232.4, z: 86.1 })
-    explorer.yaw = Math.atan2(-54.6, 47.8)
-  })
-  await page.keyboard.down('KeyW')
-  await step(page, 160)
-  await page.keyboard.up('KeyW')
-  s = await state(page)
-  const along = ((s.x + 232.9) * 54.6 + (s.z - 86.5) * -47.8) / Math.hypot(54.6, 47.8)
-  const across = Math.abs(((s.x + 232.9) * -47.8 - (s.z - 86.5) * 54.6) / Math.hypot(54.6, 47.8))
-  check(along > 25, `walks through the tunnel (${along.toFixed(1)} m in)`)
-  check(across < 3.5, `stays inside the tunnel (${across.toFixed(2)} m off-axis)`)
+  // 沿隧道（先垂直校門、再彎向東北）穿過：每隔一小段把視線對準折線前方
+  const tunnelState = () =>
+    page.evaluate(() => {
+      const { explorer, world } = window.__campus
+      const P = world.tunnelPts
+      const q = explorer.pos ?? explorer.position
+      let best = Infinity
+      let s = 0
+      let acc = 0
+      let bestS = 0
+      for (let i = 1; i < P.length; i++) {
+        const a = P[i - 1]
+        const b = P[i]
+        const vx = b.x - a.x
+        const vz = b.z - a.z
+        const l = Math.hypot(vx, vz)
+        const u = Math.max(0, Math.min(1, ((q.x - a.x) * vx + (q.z - a.z) * vz) / (l * l)))
+        const d = Math.hypot(q.x - a.x - u * vx, q.z - a.z - u * vz)
+        if (d < best) {
+          best = d
+          bestS = acc + u * l
+        }
+        acc += l
+      }
+      s = bestS
+      return { along: s, across: best, total: acc }
+    })
+  await page.evaluate(() => window.__campus.explorer.teleport({ x: -232.6, z: 85.5 }))
+  for (let k = 0; k < 12; k++) {
+    await page.evaluate(() => {
+      const { explorer, world } = window.__campus
+      const P = world.tunnelPts
+      const q = explorer.pos ?? explorer.position
+      // 前方 6 m 的折線點
+      let bi = 0
+      let bd = Infinity
+      P.forEach((p, i) => {
+        const d = Math.hypot(p.x - q.x, p.z - q.z)
+        if (d < bd) {
+          bd = d
+          bi = i
+        }
+      })
+      const t = P[Math.min(P.length - 1, bi + 2)]
+      explorer.yaw = Math.atan2(-(t.x - q.x), -(t.z - q.z))
+    })
+    await page.keyboard.down('KeyW')
+    await step(page, 14)
+    await page.keyboard.up('KeyW')
+  }
+  let ts = await tunnelState()
+  check(ts.along > 25, `walks through the tunnel (${ts.along.toFixed(1)} m in of ${ts.total.toFixed(1)})`)
+  check(ts.across < 3.5, `stays inside the tunnel (${ts.across.toFixed(2)} m off-axis)`)
   await shot(page, '03-tunnel')
-  // 碰撞：朝側面撞隧道牆
+  // 碰撞：朝側面撞隧道牆（回到隧道中段）
+  await page.evaluate(() => {
+    const { explorer, world } = window.__campus
+    const P = world.tunnelPts
+    const m = P[Math.floor(P.length / 2)]
+    explorer.teleport({ x: m.x, z: m.z })
+  })
   await page.keyboard.down('KeyD')
   await step(page, 60)
   await page.keyboard.up('KeyD')
-  s = await state(page)
-  const across2 = Math.abs(((s.x + 232.9) * -47.8 - (s.z - 86.5) * 54.6) / Math.hypot(54.6, 47.8))
-  check(across2 < 3.5, `tunnel wall blocks sideways movement (${across2.toFixed(2)} m off-axis)`)
+  ts = await tunnelState()
+  check(ts.across < 3.5, `tunnel wall blocks sideways movement (${ts.across.toFixed(2)} m off-axis)`)
 
   for (const [num, name] of [
     ['03', 'world'],
