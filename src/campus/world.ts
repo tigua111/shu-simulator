@@ -371,6 +371,7 @@ export class CampusWorld {
     this.addCampusDetails()
     this.addPlazaFurniture()
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
+    this.addFences()
     this.addStreetDressing()
     this.addTrees()
     this.addLamps()
@@ -1506,6 +1507,156 @@ export class CampusWorld {
     g.position.set(BACK_GATE.x, y, BACK_GATE.z)
     g.rotation.y = Math.atan2(perp.x, perp.z) - Math.PI / 2
     this.scene.add(g)
+  }
+
+  // ─── 圍欄 ─────────────────────────────────────────
+  /**
+   * 依 0037_057–086、0042_098–114 空拍：
+   * - 操場北側沿試院路：紅磚矮牆＋墨綠欄杆，牆內為椰子樹步道與座椅；西北角繞過試院路迴車圓環
+   * - 大禮堂北側到後校門：同款磚牆欄杆，後校門兩柱之間開口
+   * - 網球場（大禮堂東側）：約 4 m 高墨綠色菱形鐵絲網，朝跑道一側留門
+   * - 跑道東南側（傳播大廈車道旁）：1.2 m 欄杆
+   * 圍欄會阻擋行走；編輯模式可整段拖曳、旋轉。
+   */
+  private addFences(): void {
+    const tex = (draw: (g: CanvasRenderingContext2D) => void, rx: number, ry: number) => {
+      const c = document.createElement('canvas')
+      c.width = c.height = 64
+      const g = c.getContext('2d')!
+      draw(g)
+      const t = new THREE.CanvasTexture(c)
+      t.wrapS = t.wrapT = THREE.RepeatWrapping
+      t.colorSpace = THREE.SRGBColorSpace
+      t.anisotropy = 4
+      t.repeat.set(rx, ry)
+      return t
+    }
+    const green = '#2c4f42'
+    // 欄杆直條：每 0.13 m 一支
+    const pickets = tex(g => {
+      g.fillStyle = green
+      g.fillRect(26, 0, 12, 64)
+    }, 1 / 0.13, 1)
+    // 菱形鐵絲網：每 0.5 m 一格
+    const chain = tex(g => {
+      g.strokeStyle = green
+      g.lineWidth = 5
+      g.beginPath()
+      g.moveTo(0, 0)
+      g.lineTo(64, 64)
+      g.moveTo(64, 0)
+      g.lineTo(0, 64)
+      g.stroke()
+    }, 1 / 0.5, 1 / 0.5)
+    const M = {
+      brick: new THREE.MeshLambertMaterial({ color: 0x9c4f3c }),
+      coping: new THREE.MeshLambertMaterial({ color: 0xd8cfc4 }),
+      metal: new THREE.MeshLambertMaterial({ color: 0x2c4f42 }),
+      pickets: new THREE.MeshLambertMaterial({ map: pickets, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide }),
+      chain: new THREE.MeshLambertMaterial({ map: chain, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, depthWrite: false }),
+    }
+    type Style = 'street' | 'mesh' | 'rail'
+    const build = (pts: Vec2[], style: Style) => {
+      const parts = new Map<THREE.Material, THREE.BufferGeometry[]>()
+      const put = (mat: THREE.Material, geo: THREE.BufferGeometry, x: number, y: number, z: number, yaw: number) => {
+        geo.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(1, 1, 1)))
+        const l = parts.get(mat) ?? []
+        l.push(geo)
+        parts.set(mat, l)
+      }
+      // 依實際尺寸設定面板 UV（公尺），讓直條與網目密度一致
+      const panel = (len: number, h: number) => {
+        const p = new THREE.PlaneGeometry(len, h)
+        const uv = p.attributes.uv as THREE.BufferAttribute
+        for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len, uv.getY(i) * h)
+        return p
+      }
+      const railH = style === 'mesh' ? 4 : style === 'rail' ? 1.2 : 0.85
+      const wallH = style === 'street' ? 0.9 : 0
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]
+        const b = pts[i]
+        const L = Math.hypot(b.x - a.x, b.z - a.z)
+        const n = Math.max(1, Math.ceil(L / 2.5))
+        for (let k = 0; k < n; k++) {
+          const p = { x: a.x + ((b.x - a.x) * k) / n, z: a.z + ((b.z - a.z) * k) / n }
+          const q = { x: a.x + ((b.x - a.x) * (k + 1)) / n, z: a.z + ((b.z - a.z) * (k + 1)) / n }
+          const len = L / n
+          const mx = (p.x + q.x) / 2
+          const mz = (p.z + q.z) / 2
+          const yaw = Math.atan2(-(q.z - p.z), q.x - p.x)
+          const y0 = Math.min(groundHeight(p.x, p.z), groundHeight(q.x, q.z))
+          const y1 = Math.max(groundHeight(p.x, p.z), groundHeight(q.x, q.z))
+          let top = y0
+          if (wallH) {
+            // 磚牆往下埋到坡面較低處，避免斜坡上懸空
+            const h = wallH + (y1 - y0) + 1.2
+            put(M.brick, new THREE.BoxGeometry(len + 0.02, h, 0.32), mx, y1 + wallH - h / 2, mz, yaw)
+            put(M.coping, new THREE.BoxGeometry(len + 0.06, 0.08, 0.42), mx, y1 + wallH + 0.04, mz, yaw)
+            top = y1 + wallH + 0.08
+          }
+          put(style === 'mesh' ? M.chain : M.pickets, panel(len, railH), mx, top + railH / 2, mz, yaw)
+          put(M.metal, new THREE.BoxGeometry(len, 0.06, 0.06), mx, top + railH, mz, yaw)
+          if (style !== 'mesh') put(M.metal, new THREE.BoxGeometry(len, 0.05, 0.05), mx, top + 0.08, mz, yaw)
+          put(M.metal, new THREE.BoxGeometry(0.08, railH + (wallH ? 0 : 0.3), 0.08), p.x, top + railH / 2 - (wallH ? 0 : 0.15), p.z, 0)
+          if (k === n - 1 && i === pts.length - 1) put(M.metal, new THREE.BoxGeometry(0.08, railH, 0.08), q.x, top + railH / 2, q.z, 0)
+        }
+        // 阻擋行走：每 0.7 m 一個碰撞點
+        const m = Math.max(1, Math.ceil(L / 0.7))
+        for (let k = 0; k <= m; k++) this.obstacles.push({ x: a.x + ((b.x - a.x) * k) / m, z: a.z + ((b.z - a.z) * k) / m, r: 0.3 })
+      }
+      for (const [mat, geos] of parts) {
+        const mesh = new THREE.Mesh(mergeGeometries(geos), mat)
+        mesh.castShadow = mat !== M.chain && mat !== M.pickets
+        mesh.receiveShadow = true
+        this.scene.add(mesh)
+      }
+    }
+    const P = (a: [number, number][]) => a.map(([x, z]) => ({ x, z }))
+    // 後校門兩側（柱位見 addBackGate；西側止於綠色玻璃雨棚北緣）
+    const gl = Math.hypot(BACK_GATE.dir.x, BACK_GATE.dir.z)
+    const gp = { x: -BACK_GATE.dir.z / gl, z: BACK_GATE.dir.x / gl }
+    const pillar = (s: number) => ({ x: BACK_GATE.x + gp.x * s * 3.9, z: BACK_GATE.z + gp.z * s * 3.9 })
+    const west = pillar(-1)
+    const east = pillar(1)
+    this.capture('obj:fence-backgate-w', '圍欄：後校門西側', '', 'ground', () => build([{ x: 76, z: -56.4 }, west], 'street'))
+    this.capture('obj:fence-backgate-e', '圍欄：後校門東側（大禮堂北側）', '', 'ground', () => build([east, ...P([[100, -55.3], [136, -55.5]])], 'street'))
+    this.capture('obj:fence-track-nw', '圍牆：操場西北角（試院路迴車圓環）', '', 'ground', () =>
+      build(P([[136, -55.5], [141, -54.8], [145.5, -52.6], [148.6, -49], [150.2, -45.2], [153, -43.6], [158, -43.3]]), 'street'),
+    )
+    this.capture('obj:fence-track-n', '圍欄：操場北側（試院路）', '', 'ground', () =>
+      build(P([[158, -43.3], [167, -45.6], [176, -48.6], [215, -41.6], [240, -37], [252, -33], [262, -30]]), 'street'),
+    )
+    this.capture('obj:fence-track-se', '欄杆：跑道東南側', '', 'ground', () => build(P([[217.5, 9.4], [247.5, 11.6]]), 'rail'))
+    // 網球場鐵絲網：依 OSM 球場輪廓外推 0.6 m，東側（朝跑道）留 2.4 m 門
+    const court = AREAS.find(a => a.id === 'tennis')
+    if (court) {
+      const c = centroid(court.pts)
+      const ring = court.pts.map(p => {
+        const l = Math.hypot(p.x - c.x, p.z - c.z) || 1
+        return { x: p.x + ((p.x - c.x) / l) * 0.6, z: p.z + ((p.z - c.z) / l) * 0.6 }
+      })
+      // 找最靠東的一邊放門
+      let ei = 0
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i]
+        const b = ring[(i + 1) % ring.length]
+        const e = ring[ei]
+        const f = ring[(ei + 1) % ring.length]
+        if (a.x + b.x > e.x + f.x) ei = i
+      }
+      const a = ring[ei]
+      const b = ring[(ei + 1) % ring.length]
+      const L = Math.hypot(b.x - a.x, b.z - a.z)
+      const u = { x: (b.x - a.x) / L, z: (b.z - a.z) / L }
+      const m = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }
+      const d1 = { x: m.x + u.x * 1.2, z: m.z + u.z * 1.2 }
+      const d0 = { x: m.x - u.x * 1.2, z: m.z - u.z * 1.2 }
+      const line: Vec2[] = [d1]
+      for (let k = 1; k <= ring.length; k++) line.push(ring[(ei + k) % ring.length])
+      line.push(d0)
+      this.capture('obj:fence-tennis', '網球場鐵絲網', '', 'ground', () => build(line, 'mesh'))
+    }
   }
 
   private addStreetDressing(): void {

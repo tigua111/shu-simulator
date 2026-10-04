@@ -314,7 +314,8 @@ out['track'] = dict(center=S((536, 194)), rot=round(ang, 4), len=84, w=40, lane=
 st = Polygon(ring(493929425))
 out['stage'] = dict(center=S((st.centroid.x, st.centroid.y)), r=round(math.sqrt(st.area / math.pi), 2))
 # 後校門（學校廣場北端步道接試院路處）、前校門（隧道西南口）
-out['backGate'] = dict(center=S((415.5, 238.5)), dir=[5.0, -15.0])
+# 0052_059 正射對位：後校門開在學校廣場北緣圍欄上（backgate-walk 步道穿過處），不在試院路路口中央
+out['backGate'] = dict(center=S((414.2, 235.4)), dir=[5.0, -15.0])
 out['frontGate'] = dict(center=S((97.1, 93.5)), dir=[round(151.7 - 97.1, 2), round(-(141.3 - 93.5), 2)])
 
 json.dump(out, open(f'{GEO}/site.json', 'w'), ensure_ascii=False)

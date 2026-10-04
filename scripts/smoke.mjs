@@ -59,7 +59,7 @@ const step = (page, frames, dt = 0.05) =>
     const { explorer } = window.__campus
     for (let i = 0; i < n; i++) explorer.update(d)
   }, [frames, dt])
-const shot = (page, name) => page.screenshot({ path: `${out}/${name}.png` })
+const shot = (page, name) => page.screenshot({ path: `${out}/${name}.png`, timeout: 120_000 })
 
 try {
   await waitForServer()
