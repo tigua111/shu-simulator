@@ -320,7 +320,7 @@ export class CampusWorld {
 
   constructor() {
     const scene = this.scene
-    scene.fog = new THREE.Fog(0xdfe8ec, 260, 1100)
+    scene.fog = new THREE.Fog(0xdfe8ec, 320, 1700)
     this.addSky()
     scene.add(new THREE.HemisphereLight(0xe4f0ff, 0x5d7a45, 1.7))
     this.sun = new THREE.DirectionalLight(0xfff0d8, 2.6)
@@ -467,10 +467,12 @@ export class CampusWorld {
 
   // ─── 天空 ───────────────────────────────────────────
   private addSky(): void {
-    const geo = new THREE.SphereGeometry(1400, 32, 16)
+    // 天空球跟著相機移動，半徑小於相機遠裁切面，任何視角都不會被裁出黑塊
+    const geo = new THREE.SphereGeometry(1100, 32, 16)
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
+      depthTest: false,
       fog: false,
       uniforms: { top: { value: new THREE.Color(0x7fb4e3) }, horizon: { value: new THREE.Color(0xe6eef0) } },
       vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
@@ -478,19 +480,60 @@ export class CampusWorld {
         'uniform vec3 top; uniform vec3 horizon; varying vec3 vP; void main(){ float h = clamp(normalize(vP).y * 1.6, 0.0, 1.0); gl_FragColor = vec4(mix(horizon, top, h), 1.0); }',
     })
     const sky = new THREE.Mesh(geo, mat)
-    sky.renderOrder = -1
+    sky.renderOrder = -10
     sky.frustumCulled = false
-    this.scene.add(sky)
-    // 遠方山稜（木柵、景美一帶）
-    const r = rng(7)
-    const ridgeMat = new THREE.MeshLambertMaterial({ color: 0x6f8f6a })
-    for (let i = 0; i < 30; i++) {
-      const a = (i / 30) * Math.PI * 2
-      const dist = 720 + r() * 120
-      const m = new THREE.Mesh(new THREE.ConeGeometry(110 + r() * 80, 70 + r() * 90, 6), ridgeMat)
-      m.position.set(20 + Math.cos(a) * dist, 0, 65 + Math.sin(a) * dist)
-      this.scene.add(m)
+    sky.onBeforeRender = (_r, _s, cam) => {
+      sky.position.copy(cam.position)
+      sky.updateMatrixWorld()
+      sky.modelViewMatrix.multiplyMatrices(cam.matrixWorldInverse, sky.matrixWorld)
     }
+    this.scene.add(sky)
+    // 遠方山稜（木柵、景美一帶）：連續環帶，高低起伏；南、東南側（指南山、二格山方向）較高
+    const r = rng(7)
+    const seg = 160
+    const rings = [700, 820, 960, 1100]
+    const phase = [r() * 6, r() * 6, r() * 6, r() * 6]
+    const height = (a: number, k: number) => {
+      const south = 0.65 + 0.35 * Math.max(0, Math.sin(a + 0.4))
+      const n =
+        0.55 +
+        0.25 * Math.sin(a * 3 + phase[0]) +
+        0.12 * Math.sin(a * 7 + phase[1]) +
+        0.08 * Math.sin(a * 13 + phase[2]) +
+        0.05 * Math.sin(a * 23 + phase[3])
+      return [0, 70, 150, 120][k] * south * Math.max(0.15, n) * (k === 0 ? 0 : 1)
+    }
+    const pos: number[] = []
+    const col: number[] = []
+    const idx: number[] = []
+    const near = new THREE.Color(0x3f5e3a)
+    const far = new THREE.Color(0x7d9488)
+    const cc = new THREE.Color()
+    for (let i = 0; i <= seg; i++) {
+      const a = (i / seg) * Math.PI * 2
+      rings.forEach((rad, k) => {
+        const jitter = k === 0 ? 0 : (r() - 0.5) * 30
+        pos.push(20 + Math.cos(a) * (rad + jitter), -2 + height(a, k), 65 + Math.sin(a) * (rad + jitter))
+        cc.copy(near).lerp(far, k / (rings.length - 1))
+        col.push(cc.r, cc.g, cc.b)
+      })
+    }
+    const nr = rings.length
+    for (let i = 0; i < seg; i++) {
+      for (let k = 0; k < nr - 1; k++) {
+        const a = i * nr + k
+        const b = (i + 1) * nr + k
+        idx.push(a, b, a + 1, b, b + 1, a + 1)
+      }
+    }
+    const rg = new THREE.BufferGeometry()
+    rg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    rg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+    rg.setIndex(idx)
+    rg.computeVertexNormals()
+    const ridge = new THREE.Mesh(rg, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }))
+    ridge.name = 'ridges'
+    this.scene.add(ridge)
   }
 
   // ─── 地形 ─────────────────────────────────────────
@@ -505,9 +548,10 @@ export class CampusWorld {
     const colors = new Float32Array(pos.count * 3)
     const c = new THREE.Color()
     const r = rng(11)
-    const forest = new THREE.Color(0x46733a)
-    const lawn = new THREE.Color(0x86b35c)
-    const urban = new THREE.Color(0xb3ada4)
+    // 空拍：山坡為連續濃密闊葉林（林下陰暗），市區地面多為灰色柏油與水泥
+    const forest = new THREE.Color(0x2f4d2a)
+    const understory = new THREE.Color(0x3c5a31)
+    const urban = new THREE.Color(0x9e9c98)
     const areaColor: Record<AreaKind, THREE.Color> = {
       plaza: new THREE.Color(0xcf9f8a),
       sports: new THREE.Color(0xb5473a),
@@ -530,7 +574,7 @@ export class CampusWorld {
         c.copy(forest).offsetHSL(jitter * 0.5, 0, jitter)
         set = true
       } else if (hill > 0.5) {
-        c.copy(lawn).offsetHSL(jitter * 0.4, -0.05, jitter - 0.04)
+        c.copy(understory).offsetHSL(jitter * 0.4, 0, jitter)
         set = true
       } else {
         for (const kind of areaOrder) {
@@ -544,7 +588,7 @@ export class CampusWorld {
       }
       if (!set) {
         const inForest = FOREST.some(fp => pointInPolygon(p, fp))
-        if (inForest) c.copy(lawn).offsetHSL(jitter * 0.4, 0, jitter)
+        if (inForest) c.copy(understory).offsetHSL(jitter * 0.4, 0, jitter)
         else c.copy(urban).offsetHSL(0, 0, jitter * 0.6)
       }
       colors[k * 3] = c.r
@@ -973,25 +1017,60 @@ export class CampusWorld {
   }
 
   private addNeighbors(): void {
-    // 每棟獨立網格（牆與屋頂同一幾何、兩組材質），編輯模式可個別移動
-    const wallMat = facadeMat('city', 3.2, 6.4)
+    // 每棟獨立網格（牆與屋頂同一幾何、兩組材質），編輯模式可個別移動。
+    // 空拍 0042/0045：周邊民宅外牆以白、淺灰、米色磁磚為主，夾雜粉褐色磚牆；
+    // 屋頂多為灰色水泥，約半數有藍、綠、灰色鐵皮頂樓加蓋。
+    const baseWall = facadeMat('city', 3.2, 6.4)
+    const WALLS = [0xffffff, 0xf4f1ea, 0xe9e2d4, 0xdcd6cc, 0xf0dcd0, 0xd8c3b0, 0xc9a595, 0xbfc3c4]
+    const wallMats = WALLS.map(c => {
+      const m = baseWall.clone()
+      m.color.setHex(c)
+      return m
+    })
+    const ROOFS = [0x9a9893, 0x8c8a86, 0xa9a59c, 0x7f8183]
+    const SHEDS = [0x4f7fa8, 0x5e8fb5, 0x6f9a7a, 0x9fb7a8, 0xb9b6ae, 0x9a5a45]
     const roofMats = new Map<number, THREE.Material>()
     const roofMat = (c: number) => {
       let m = roofMats.get(c)
       if (!m) roofMats.set(c, (m = new THREE.MeshLambertMaterial({ color: c })))
       return m
     }
+    const hash = (s: string) => {
+      let h = 2166136261
+      for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+      return (h >>> 0) / 4294967296
+    }
     for (const n of NEIGHBORS) {
       const base = baseOf(n.pts)
       const c = centroid(n.pts)
-      const [cp, sd] = prism(n.pts, base - 6.4, groundHeight(c.x, c.z) + n.h)
+      const top = groundHeight(c.x, c.z) + n.h
+      const [cp, sd] = prism(n.pts, base - 6.4, top)
       const geo = mergeGeometries([sd, cp], true)
       geo.translate(-c.x, 0, -c.z)
-      const mesh = new THREE.Mesh(geo, [wallMat, roofMat(n.roof ?? STYLE_ROOF.city)])
+      const h1 = hash(n.id)
+      const h2 = hash(n.id + '#')
+      const wall = n.sid ? baseWall : wallMats[Math.floor(h1 * wallMats.length)]
+      const roof = n.roof ?? ROOFS[Math.floor(h2 * ROOFS.length)]
+      const mesh = new THREE.Mesh(geo, [wall, roofMat(roof)])
       mesh.castShadow = mesh.receiveShadow = true
       const pivot = new THREE.Group()
       pivot.position.set(c.x, 0, c.z)
       pivot.add(mesh)
+      // 頂樓加蓋：輪廓向質心縮至 55%，高 2.6 m
+      const area = Math.abs(n.pts.reduce((s, p, i) => {
+        const q = n.pts[(i + 1) % n.pts.length]
+        return s + p.x * q.z - q.x * p.z
+      }, 0)) / 2
+      if (!n.sid && area > 40 && h2 < 0.55) {
+        const inner = n.pts.map(p => ({ x: c.x + (p.x - c.x) * 0.55, z: c.z + (p.z - c.z) * 0.55 }))
+        const [icp, isd] = prism(inner, top - 0.2, top + 2.6)
+        const ig = mergeGeometries([isd, icp], true)
+        ig.translate(-c.x, 0, -c.z)
+        const shed = roofMat(SHEDS[Math.floor(hash(n.id + 's') * SHEDS.length)])
+        const add = new THREE.Mesh(ig, [roofMat(0xd9d6cf), shed])
+        add.castShadow = true
+        pivot.add(add)
+      }
       this.scene.add(pivot)
       const base0: Edit = LOADED_EDITS[n.id] ?? { dx: 0, dz: 0, rot: 0 }
       const mv: Movable = {
@@ -1395,7 +1474,7 @@ export class CampusWorld {
           min = Math.min(min, groundHeight(BOUNDS.minX + ((BOUNDS.maxX - BOUNDS.minX) * i) / 20, BOUNDS.minZ + ((BOUNDS.maxZ - BOUNDS.minZ) * j) / 20))
         }
       }
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(3200, 3200), new THREE.MeshLambertMaterial({ color: 0xb3ada4 }))
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(3200, 3200), new THREE.MeshLambertMaterial({ color: 0x9e9c98 }))
       plane.rotation.x = -Math.PI / 2
       plane.position.set((BOUNDS.minX + BOUNDS.maxX) / 2, min - 1.2, (BOUNDS.minZ + BOUNDS.maxZ) / 2)
       plane.receiveShadow = true
@@ -1459,7 +1538,7 @@ export class CampusWorld {
     // 依正射影像樹冠遮罩種樹：只長在航照上有樹冠、且不是步道／建物／場地的位置
     const noTree = AREAS.filter(a => a.kind === 'sports' || a.kind === 'court' || a.kind === 'field' || a.kind === 'plaza')
     let guard = 0
-    while (trees.length < 4200 && guard++ < 140000) {
+    while (trees.length < 5600 && guard++ < 200000) {
       const x = BOUNDS.minX + r() * (BOUNDS.maxX - BOUNDS.minX)
       const z = BOUNDS.minZ + r() * (BOUNDS.maxZ - BOUNDS.minZ)
       if (!canopyAt(x, z)) continue
@@ -1475,7 +1554,8 @@ export class CampusWorld {
         if (noTree.some(a => pointInPolygon(p, a.pts))) continue
         if (BUILDINGS.some(b => pointInPolygon(p, b.pts))) continue
       } else if (insideSolid(p, 1.5)) continue
-      trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : 1.0 + r() * 1.0 })
+      // 空拍中山坡樹冠連成一片：山坡樹放大（冠幅約 9–15 m），平地行道樹維持較小
+      trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : insideSolid(p, 6) ? 1.0 + r() * 0.3 : 1.5 + r() * 1.1 })
     }
     // 學校廣場樹陣：0052_059 空拍為大禮堂前西側的規則格狀樹陣（plazaSurvey.ts）
     {
@@ -1535,7 +1615,8 @@ export class CampusWorld {
         crown.setMatrixAt(i, m)
       }
       place(t.x, t.z, 0)
-      col.setHSL(0.24 + r() * 0.08, 0.45 + r() * 0.2, 0.24 + r() * 0.12)
+      if (t.s >= 1.5) col.setHSL(0.25 + r() * 0.07, 0.36 + r() * 0.16, 0.12 + r() * 0.08)
+      else col.setHSL(0.24 + r() * 0.08, 0.4 + r() * 0.18, 0.16 + r() * 0.08)
       crown.setColorAt(i, col)
       const id = idFor('tree', t.x, t.z)
       treeIds.push(id)
@@ -1775,4 +1856,3 @@ export class CampusWorld {
     }
   }
 }
-

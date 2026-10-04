@@ -226,7 +226,7 @@ export function facadeTexture(style: BuildingStyle): THREE.CanvasTexture {
       break
     }
     case 'city':
-      tile('#c9c3ba', '#b7b0a6', 32)
+      tile('#ebe7e0', '#d6d1c9', 32)
       windowBand(14, 34, 100, 46, '#7d93a8', '#9a9a9a', 3)
       break
   }

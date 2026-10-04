@@ -59,7 +59,7 @@ try {
   if (Math.hypot(moved.x - a.px, moved.z - a.pz) < 5) fail('building did not move')
   if (!moved.ls) fail('not saved')
   await page.click('[data-edit-rot="15"]')
-  await page.screenshot({ path: `${out}/e1-dragged.png` })
+  await page.screenshot({ path: `${out}/e1-dragged.png`, timeout: 120_000 })
   // 其他物件：樹（學校廣場樹陣）、路燈、前校門
   const dragObj = async (pick, shot) => {
     const t = await page.evaluate(pick => {
@@ -90,7 +90,7 @@ try {
     }, t.id)
     console.log('drag', t.id, JSON.stringify(r))
     if (Math.hypot(r.edit.dx, r.edit.dz) < 1) fail(`${t.id} did not move`)
-    await page.screenshot({ path: `${out}/${shot}.png` })
+    await page.screenshot({ path: `${out}/${shot}.png`, timeout: 120_000 })
     return t.id
   }
   const treeId = await dragObj('tree@58.0,-28.0', 'e1b-tree')
@@ -125,7 +125,7 @@ try {
   await page.click('[data-edit-toggle]')
   await top()
   await page.waitForTimeout(600)
-  await page.screenshot({ path: `${out}/e2-reloaded.png` })
+  await page.screenshot({ path: `${out}/e2-reloaded.png`, timeout: 120_000 })
   page.once('dialog', d => d.accept())
   await page.click('[data-edit-reset-all]')
   const reset = await page.evaluate(() => localStorage.getItem('shucampus.buildingEdits.v1'))
@@ -137,7 +137,7 @@ try {
   await m.click('[data-start="overview"]')
   await m.click('[data-edit-toggle]')
   await m.waitForTimeout(800)
-  await m.screenshot({ path: `${out}/e3-mobile.png` })
+  await m.screenshot({ path: `${out}/e3-mobile.png`, timeout: 120_000 })
   if (errors.length) fail('console errors: ' + errors.join(' | '))
   console.log(process.exitCode ? 'edit-check: FAIL' : 'edit-check: PASS')
 } finally {

@@ -64,7 +64,7 @@ export class Explorer {
     private readonly obstacles: Obstacle[],
     private readonly events: ExplorerEvents,
   ) {
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1600)
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 2600)
     this.camera.rotation.order = 'YXZ'
     this.orbit = new OrbitControls(this.camera, canvas)
     this.orbit.enabled = false

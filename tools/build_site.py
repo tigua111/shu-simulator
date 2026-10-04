@@ -168,6 +168,50 @@ for pid, kind, w, osm in PATHS:
     pts = way_pts(osm)
     paths.append(dict(id=pid, kind=kind, w=w, osm=osm, pts=pts))
 
+# ─── 補充周邊建物：國土測繪中心通用電子地圖建物塊（OSM 缺漏的街區） ─────────
+# 空拍 0042/0045 顯示校區北、東、南側為密集 3–8 層民宅；OSM 只畫了一部分。
+_road_lines = []
+for wid, w in W.items():
+    hw = w['tags'].get('highway')
+    if not hw or hw in ('footway', 'steps', 'path', 'pedestrian', 'corridor'):
+        continue
+    try:
+        lp = way_pts(wid)
+    except Exception:
+        continue
+    if len(lp) >= 2:
+        _road_lines.append(LineString(lp).buffer(3.0 if hw in ('residential', 'service', 'unclassified', 'living_street') else 4.5))
+for p in paths:
+    if len(p['pts']) >= 2:
+        _road_lines.append(LineString(p['pts']).buffer(p['w'] / 2 + 0.6))
+road_union = unary_union(_road_lines)
+nb_union = unary_union([Polygon(n['poly']).buffer(0) for n in neighbors])
+_emap_added = 0
+for e in json.load(open(f'{GEO}/emap_buildings.json')):
+    try:
+        poly = Polygon(e['pts']).buffer(0).buffer(-0.5).simplify(0.6)
+    except Exception:
+        continue
+    if poly.is_empty or poly.geom_type != 'Polygon' or poly.area < 15:
+        continue
+    c = poly.centroid
+    if not (BOUNDS['x0'] - 60 < c.x < BOUNDS['x1'] + 40 and BOUNDS['y0'] - 40 < c.y < BOUNDS['y1'] + 40):
+        continue
+    if poly.intersection(campus_union.buffer(1.5)).area > 0.08 * poly.area:
+        continue
+    if poly.intersection(nb_union.buffer(1.0)).area > 0.15 * poly.area:
+        continue
+    poly = poly.difference(road_union)
+    if poly.geom_type == 'MultiPolygon':
+        poly = max(poly.geoms, key=lambda g: g.area)
+    if poly.is_empty or poly.geom_type != 'Polygon' or poly.area < 15:
+        continue
+    hsh = (int(e['id']) * 2654435761) % 1000
+    floors = (2 + hsh % 2) if poly.area < 70 else (4 + hsh % 3) if poly.area < 400 else (5 + hsh % 4)
+    neighbors.append(dict(osm=-int(e['id']) - 1, floors=floors, poly=list(poly.exterior.coords)[:-1]))
+    _emap_added += 1
+print('emap neighbors added', _emap_added, file=sys.stderr)
+
 # ─── 鋪面區域 ───────────────────────────────────────────
 areas = []
 
