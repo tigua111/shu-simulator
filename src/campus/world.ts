@@ -982,9 +982,6 @@ export class CampusWorld {
         this.placeOnFace(g, b, plaza, this.signPlane(signTexture('大禮堂', { color: '#b3202f', bg: '#f2f0ea' }), 6, 1.5), base + 7.6)
         this.placeOnFace(g, b, plaza, vertical('世新我的驕傲', '#ffd84a', '#283a73', 2.4, 12), base + 13, -6)
         break
-      case 'S':
-        this.placeOnFace(g, b, plaza, this.signPlane(signTexture('舍我樓', { color: '#ffffff', vertical: true, w: 256, h: 768, size: 210 }), 2.4, 7.2), top - 8)
-        break
       case 'M':
         this.placeOnFace(g, b, { x: b.c.x, z: b.c.z + 60 }, this.signPlane(signTexture('世新大學管理學院', { color: '#b3202f', bg: '#ffffff' }), 10, 1.4), base + 3)
         break
@@ -1328,17 +1325,63 @@ export class CampusWorld {
       cap.position.set(x, y0 + h + 0.3, z)
       scene.add(cap)
       if (sign) {
-        // 面向南側步道的「舍我樓 She-Wo Building」字樣
+        // 面向西側中庭的「舍我樓 She-Wo Building」字樣
         const p = this.signPlane(signTexture('舍我樓', { color: '#2a2a2a', vertical: true, w: 256, h: 640, size: 180 }), 2.6, 6.5)
-        p.position.set(x, y0 + h - 7, z + r + 0.05)
+        p.position.set(x - r - 0.05, y0 + h - 7, z)
+        p.rotation.y = -Math.PI / 2
         scene.add(p)
         const en = this.signPlane(signTexture('She-Wo Building', { color: '#2a2a2a', size: 110 }), 4.4, 1.1)
-        en.position.set(x, y0 + h - 11.4, z + r + 0.05)
+        en.position.set(x - r - 0.05, y0 + h - 11.4, z)
+        en.rotation.y = -Math.PI / 2
         scene.add(en)
       }
     }
-    this.capture('obj:R-tower', '舍我樓 R 圓柱樓梯塔', '', 'ground', () => cyl(R.box.x0 + 1.2, (R.box.z0 + R.box.z1) / 2, 3.6, R.h + 2))
-    this.capture('obj:S-tower', '舍我樓 S 圓柱塔（招牌）', '', 'ground', () => cyl(-4, -20, 3.9, S.h - 2, 'sign'))
+    // 南翼西端半圓樓梯塔（正射：白色圓角屋頂 x -38～-30.5）
+    this.capture('obj:R-tower', '舍我樓 R 西端樓梯塔', '', 'ground', () => cyl(R.box.x0 - 2.5, -24.5, 3.3, R.h + 2))
+    // 「舍我樓 She-Wo Building」大圓柱：主塔西端與入口棟交會處，字樣面向西側中庭（正射圓形屋頂 (2,-43)）
+    this.capture('obj:S-tower', '舍我樓 圓柱塔（招牌）', '', 'ground', () => cyl(S.box.x0 - 0.8, -43, 3.4, S.h - 3, 'sign'))
+    // 南翼北面的退台陽台（0034_124、0042_022 紅框：面向北側中庭，每層一道白色欄杆陽台）
+    this.capture('obj:R-balcony', '舍我樓 R 北面陽台', '', 'none', () => {
+      const slabM = new THREE.MeshLambertMaterial({ color: 0xd9cfc4 })
+      const railM = new THREE.MeshLambertMaterial({ color: 0xf0ece6 })
+      const x0 = R.box.x0 + 1
+      const x1 = R.box.x0 + 33
+      const zf = R.box.z0
+      const base = groundHeight((x0 + x1) / 2, zf) - 0.2
+      const floors = Math.floor(R.h / FLOOR_H) - 1
+      for (let f = 1; f <= floors; f++) {
+        const depth = 1.2 + Math.max(0, 3 - f) * 0.6
+        const y = base + f * FLOOR_H
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.28, depth), slabM)
+        slab.position.set((x0 + x1) / 2, y, zf - depth / 2)
+        slab.castShadow = true
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 1.0, 0.12), railM)
+        rail.position.set((x0 + x1) / 2, y + 0.6, zf - depth + 0.06)
+        scene.add(slab, rail)
+      }
+    })
+    // 屋頂水塔：主塔兩大兩小、入口棟南段兩座（正射圓形）
+    this.capture('obj:she-tanks', '舍我樓屋頂水塔', '', 'none', () => {
+      const tank = new THREE.MeshLambertMaterial({ color: 0xe9e6e0 })
+      const put = (x: number, z: number, r: number, h: number, b: typeof S) => {
+        const y = groundHeight(b.c.x, b.c.z) + b.h
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 20), tank)
+        m.position.set(x, y + h / 2, z)
+        m.castShadow = true
+        scene.add(m)
+        const top = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2), tank)
+        top.scale.y = 0.35
+        top.position.set(x, y + h, z)
+        scene.add(top)
+      }
+      const SE = buildingById('SE')
+      put(11.3, -52, 2.3, 3, S)
+      put(17.4, -52, 2.3, 3, S)
+      put(27, -51.5, 1.3, 2.4, S)
+      put(31, -51.5, 1.3, 2.4, S)
+      put(10, -28, 1.5, 2.6, SE)
+      put(10, -24.3, 1.5, 2.6, SE)
+    })
 
     // 八方廣場旁的紅橘色四層小塔，頂部尖頂（0034_72、0042_144）
     this.capture('obj:red-tower', '紅色小塔', '', 'ground', () => {

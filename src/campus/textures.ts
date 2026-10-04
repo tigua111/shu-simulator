@@ -64,11 +64,16 @@ export function facadeTexture(style: BuildingStyle): THREE.CanvasTexture {
       g.fillRect(0, 118, 128, 10)
       break
     case 'brick':
-      // 舍我樓：偏粉的褐色面磚，橫向帶窗
-      tile('#a8705e', '#956250', 8)
-      windowBand(10, 44, 108, 40, '#8aa6bf', '#d9cfc4', 4)
-      g.fillStyle = '#93604f'
-      g.fillRect(0, 112, 128, 16)
+      // 舍我樓（0037_039、0045_065–078）：偏粉米褐色面磚，深凹方窗，窗下一道粉紅色窗台帶
+      tile('#b8907f', '#a98170', 8)
+      g.fillStyle = '#c99a93'
+      g.fillRect(14, 86, 100, 10)
+      g.fillStyle = '#6f5248'
+      g.fillRect(22, 26, 84, 58)
+      windowBand(26, 30, 76, 52, '#8fa7bb', '#cfc6bd', 2)
+      g.fillStyle = '#a57c6c'
+      g.fillRect(0, 0, 10, 128)
+      g.fillRect(118, 0, 10, 128)
       break
     case 'auditorium':
       g.fillStyle = '#f4f2ec'
@@ -237,7 +242,7 @@ export function facadeTexture(style: BuildingStyle): THREE.CanvasTexture {
 
 export const STYLE_ROOF: Record<BuildingStyle, number> = {
   pinkTile: 0xbfa79e,
-  brick: 0x8c5444,
+  brick: 0x8a8884,
   auditorium: 0xd9d6cf,
   whiteTile: 0xc9c6bf,
   glass: 0x7d8c99,

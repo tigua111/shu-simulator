@@ -66,24 +66,35 @@ buildings = []
 for bid, num, name, code, osm, floors, style in CAMPUS:
     buildings.append(dict(id=bid, num=num, name=name, code=code, osm=osm, floors=floors, style=style, poly=ring(osm)))
 
-# 舍我樓：OSM 一個輪廓，依航照分成西翼 R（10F）與東側塔樓 S（12F）；
-# S 一樓有 OSM 標示的有頂步道（245410244, y≈218.7）穿越，做成騎樓通道。
-she = Polygon(ring(245404436))
-R_cut = Polygon([(280, 190), (328.6, 190), (328.6, 216.5), (280, 216.5)])
-R_poly = she.intersection(R_cut)
-S_poly = she.difference(R_cut)
-buildings.append(dict(id='R', num='12', name='舍我樓 R', code='R', osm=245404436, floors=10, style='brick', poly=list(R_poly.exterior.coords)[:-1]))
-s_south = S_poly.intersection(Polygon([(320, 190), (380, 190), (380, 216.6), (320, 216.6)]))
-s_north = S_poly.intersection(Polygon([(320, 220.8), (380, 220.8), (380, 260), (320, 260)]))
-buildings.append(dict(id='S', num='13', name='舍我樓 S', code='S', osm=245404436, floors=12, style='brick', poly=list(S_poly.exterior.coords)[:-1],
-                      ground=[list(g.exterior.coords)[:-1] for g in (s_south, s_north)], groundH=4.6))
+# 舍我樓（2026-10-04 依使用者紅框照片 DJI_0042_022、0037_039 與 0045_063–078 重建；
+# 量測底圖為 NLSC 正射 4 倍放大＋5 m 格線 she_zoom.jpg）。OSM 輪廓 245404436 把前庭也包進樓內，不再沿用。
+#   S  北側主塔：東西向長板樓 13F（層高約 3.3 m，總高約 44 m；本模型以 3.8 m 層高換算為 11.5 層），屋頂平頂設備＋大水塔，東端緊鄰 SX
+#   SE 入口棟：主塔西南、面向前庭的 10F，中段樓梯窗帶；一樓穿堂讓有頂步道（z≈-39）東西貫通
+#   R  南翼：西延的 9F 長翼，三段斜屋頂，北面為退台陽台；西端半圓樓梯塔另由 world.ts 建
+#   前庭：主塔南側、入口棟東側的粉紅色鋪面，東接學校廣場
+def L(x, z):
+    return (x + OX, OY - z)
+
+
+def LP(pts):
+    return [L(x, z) for x, z in pts]
+
+
+buildings.append(dict(id='R', num='12', name='舍我樓 R', code='R', osm=245404436, floors=8.5, style='brick',
+                      poly=LP([(-31, -18), (6, -18), (6, -22), (12.5, -22), (12.5, -30.5), (-31, -30.7)])))
+buildings.append(dict(id='S', num='13', name='舍我樓 S', code='S', osm=245404436, floors=11.5, style='brick',
+                      poly=LP([(3, -47.5), (36, -47.5), (36, -62.5), (3, -62.5)])))
+buildings.append(dict(id='SE', num='', name='舍我樓 入口棟', code='', osm=245404436, floors=9.5, style='brick',
+                      poly=LP([(2.5, -30.5), (12.5, -30.5), (12.5, -38), (16.5, -38), (16.5, -47.5), (3, -47.5)]),
+                      ground=[LP([(3, -47.5), (16.5, -47.5), (16.5, -41.5), (3, -41.5)]), LP([(2.5, -36.5), (12.5, -36.5), (12.5, -30.5), (2.5, -30.5)])],
+                      groundH=4.6))
 
 campus_ids = {b['osm'] for b in buildings}
 campus_union = unary_union([Polygon(b['poly']).buffer(0) for b in buildings])
 
 # ─── 周邊建物（OSM building，非校舍） ─────────────────────
 neighbors = []
-SKIP = {245404436, 757234924}
+SKIP = {245404436, 757234924, 860663816, 860663831, 860663853}  # 後三者為舍我樓前庭／主塔旁的 OSM 小量體，實景為前庭鋪面與樓梯塔
 for wid, w in W.items():
     t = w['tags']
     if 'building' not in t or int(wid) in campus_ids or int(wid) in SKIP:
@@ -128,7 +139,7 @@ PATHS = [
     ('lib-steps-3', 'steps', 3, 245445680),
     ('lib-path', 'footway', 2, 246155759),
     ('she-north', 'footway', 4, 245410243),
-    ('she-arcade', 'covered', 4, 245410244),
+    ('she-arcade', 'footway', 4, 245410244),  # 穿過舍我樓入口棟一樓穿堂與前庭（前庭為露天）
     ('she-south', 'footway', 5, 245410245),
     ('to-broadcast', 'footway', 3, 739045069),
     # 學校廣場以東
@@ -224,6 +235,9 @@ area('speech', 'plaza', ring(245408150))  # 06 言論廣場
 area('bafang', 'plaza', ring(245410246))  # 八方廣場
 area('theatre', 'plaza', ring(245408151))  # 戶外劇場
 # 14 學校廣場（航照判讀：舍我樓東側至大禮堂西牆，北接後校門）
+# 舍我樓前庭（主塔南側、入口棟東側的粉紅鋪面，0045_069–074）與北側中庭（主塔西側、南翼北面退台前，0034_124）
+area('she-court', 'plaza', LP([(12.5, -30.5), (12.5, -38), (16.5, -38), (16.5, -47.5), (36, -47.5), (37, -31)]))
+area('she-yard', 'plaza', LP([(-30, -31), (2.5, -31), (2.5, -46), (-30, -46)]))
 area('school-plaza', 'plaza', [(365.5, 196), (365.5, 229.5), (397, 229.5), (401, 240.5), (417, 241.5), (430, 241), (430, 228), (428, 226), (428.5, 190), (424.5, 181), (416, 166), (405, 176), (392, 186), (375, 192)])
 # 大禮堂北側通道到操場（含兩段階梯）
 area('aud-apron', 'grounds', [(430, 228), (430, 236), (472, 236), (476, 222), (472, 219), (471, 227), (430, 227)])

@@ -47,6 +47,11 @@ try {
   await page.waitForTimeout(1500)
   await page.screenshot({ path: `${out}/v0-overview.png` })
   await page.addStyleTag({ content: '.hud,.panel,.minimap,.topbar,.brand,.modes,.index,.where,.hint{opacity:0.15!important}' })
+  if (process.env.CLEAN) {
+    // 與實景照片並排比對時用：介面全隱藏、地標標籤（Sprite）不顯示
+    await page.addStyleTag({ content: 'body > *:not(canvas):not(#app), #app > *:not(canvas){opacity:0!important}' })
+    await page.evaluate(() => window.__campus.world.scene.traverse(o => o.isSprite && (o.visible = false)))
+  }
   if (process.env.HIDE)
     await page.evaluate(names => {
       const hide = new Set(names.split(','))
