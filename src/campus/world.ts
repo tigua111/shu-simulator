@@ -1355,6 +1355,36 @@ export class CampusWorld {
     this.capture('obj:R-tower', '舍我樓 R 西端樓梯塔', '', 'ground', () => cyl(R.box.x0 - 2.5, (R.box.z0 + R.box.z1) / 2, 3.4, R.h + 2))
     // 「舍我樓 She-Wo Building」大圓柱：主塔西端與入口棟交會處，字樣面向西側中庭（正射圓形屋頂 (2,-43)）
     this.capture('obj:S-tower', '舍我樓 圓柱塔（招牌）', '', 'ground', () => cyl(S.box.x0 - 0.8, -43, 3.4, S.h - 3, 'sign'))
+    // 主塔西面的三道三角形磚柱（DJI_0038_053：鋸齒狀凸出、面磚深褐），立在弧形裙樓之上
+    this.capture('obj:S-prisms', '舍我樓 主塔西面三角磚柱', '', 'none', () => {
+      const mat = new THREE.MeshLambertMaterial({ color: 0x86594b })
+      for (const z of [-59.5, -55, -50.5]) {
+        const y0 = at(S.box.x0, z) + 3.6
+        const h = S.h - 3.6
+        const g = new THREE.CylinderGeometry(3.2, 3.2, h, 3)
+        const m = new THREE.Mesh(g, mat)
+        // 三角柱一角朝西、一邊貼牆
+        m.rotation.y = -Math.PI / 2
+        m.position.set(S.box.x0 + 1.4, y0 + h / 2, z)
+        m.castShadow = m.receiveShadow = true
+        this.occluders.push(m)
+        scene.add(m)
+      }
+    })
+    // 弧形裙樓頂的植栽槽與女兒牆（0038_053：裙樓頂一圈綠籬）
+    this.capture('obj:SW-planter', '舍我樓 弧形裙樓植栽', '', 'none', () => {
+      const SW = BUILDINGS.find(b => b.id === 'SW')
+      if (!SW) return
+      const y = at(3, -55) + SW.h
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(6.6, 0.75, 6, 24, Math.PI), new THREE.MeshLambertMaterial({ color: 0x4f7d3a }))
+      ring.rotation.set(-Math.PI / 2, 0, Math.PI / 2)
+      ring.position.set(3, y + 0.25, -55)
+      scene.add(ring)
+      const lip = new THREE.Mesh(new THREE.TorusGeometry(7.45, 0.18, 4, 24, Math.PI), new THREE.MeshLambertMaterial({ color: 0x8c6152 }))
+      lip.rotation.copy(ring.rotation)
+      lip.position.set(3, y + 0.5, -55)
+      scene.add(lip)
+    })
     // 南翼北面的退台陽台（0034_124、0042_022 紅框：面向北側中庭，每層一道白色欄杆陽台）
     this.capture('obj:R-balcony', '舍我樓 R 北面陽台', '', 'none', () => {
       const slabM = new THREE.MeshLambertMaterial({ color: 0xd9cfc4 })
@@ -1792,7 +1822,7 @@ export class CampusWorld {
         if (onPaved(p) || insideSolid(p, 2.5) || distToPolyline(p, ROUTE) < 6) continue
         if (noTree.some(a => pointInPolygon(p, a.pts))) continue
         if (BUILDINGS.some(b => pointInPolygon(p, b.pts))) continue
-      } else if (insideSolid(p, 1.5)) continue
+      } else if (insideSolid(p, 1.5) || (h < 8 && onPaved(p))) continue
       // 空拍中山坡樹冠連成一片：山坡樹放大（冠幅約 9–15 m），平地行道樹維持較小
       trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : insideSolid(p, 6) ? 1.0 + r() * 0.3 : 1.5 + r() * 1.1 })
     }
@@ -1809,6 +1839,12 @@ export class CampusWorld {
           this.obstacles.push(obs)
         }
       }
+    }
+    // 舍我樓西側中庭西緣的棕櫚（DJI_0038_053）
+    for (const q of [{ x: -11.5, z: -38.5 }]) {
+      const obs = { x: q.x, z: q.z, r: 0.4 }
+      trees.push({ x: q.x, z: q.z, s: 0.8, palm: true, obs })
+      this.obstacles.push(obs)
     }
     // 操場北緣的大王椰子
     const north = PATHS.find(p => p.id === 'track-north')
