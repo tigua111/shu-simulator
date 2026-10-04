@@ -187,6 +187,9 @@ for pid, kind, w, osm in PATHS:
 paths.append(dict(id='she-yard-n', kind='footway', w=2.2, osm=0, pts=LP([(-9.5, -44.5), (-10.5, -52), (-9, -60), (-5.5, -66.5), (-3.5, -71)])))
 paths.append(dict(id='she-yard-n-steps', kind='steps', w=2.2, osm=0, pts=LP([(-3.5, -71), (-2, -79)])))
 paths.append(dict(id='she-yard-w-steps', kind='steps', w=2.2, osm=0, pts=LP([(-13, -43), (-18.5, -46), (-24, -47.5)])))
+# 舍我樓前庭南側（DJI_0042_128 使用者藍框）：由大禮堂西側往西接 she-south 的灰色水泥車道、前庭西南角上前庭的階梯
+paths.append(dict(id='court-lane', kind='concrete', w=7, osm=0, pts=LP([(98, -13), (60, -12.8), (40, -12.5), (24, -14.5)])))
+paths.append(dict(id='she-court-steps', kind='steps', w=4.5, osm=0, pts=LP([(21.2, -18.5), (21.2, -30.5)])))
 # ─── 補充周邊建物：國土測繪中心通用電子地圖建物塊（OSM 缺漏的街區） ─────────
 # 空拍 0042/0045 顯示校區北、東、南側為密集 3–8 層民宅；OSM 只畫了一部分。
 _road_lines = []
@@ -267,6 +270,7 @@ area('theatre', 'plaza', ring(245408151))  # 戶外劇場
 # 14 學校廣場（航照判讀：舍我樓東側至大禮堂西牆，北接後校門）
 # 舍我樓前庭（主塔南側、入口棟東側的粉紅鋪面，0045_069–074）與北側中庭（主塔西側、南翼北面退台前，0034_124）
 area('she-court', 'plaza', LP([(12.5, -30.5), (12.5, -38), (16.5, -38), (16.5, -47.5), (36, -47.5), (37, -31)]))
+area('cafe-deck', 'plaza', LP([(44, -8.4), (78, -8.4), (78, 1.5), (44, 3.5)]))  # 0042_128 林緣咖啡座（不長樹）
 area('she-yard', 'plaza', LP([(-13, -35), (2.5, -35), (2.5, -44), (-13, -44)]))  # 0038_053：西緣為棕櫚與樹林，再往西是下坡小徑
 area('she-podium', 'plaza', LP([(-8, -44), (2.5, -44), (2.5, -47.6), (-1, -49.5), (-8, -47.5)]))  # 圓柱與弧形裙樓之間的灰綠磁磚平台  # 0042_030：南翼拱廊北面前的窄中庭，再往北即樹林
 area('school-plaza', 'plaza', [(365.5, 196), (365.5, 229.5), (397, 229.5), (401, 240.5), (417, 241.5), (430, 241), (430, 228), (428, 226), (428.5, 190), (424.5, 181), (416, 166), (405, 176), (392, 186), (375, 192)])
@@ -345,6 +349,12 @@ def SP(pts):
 
 out['buildings'] = [dict(id=b['id'], num=b['num'], name=b['name'], code=b['code'], osm=b['osm'], floors=b['floors'], h=round(b['floors'] * FLOOR + 0.8, 1), style=b['style'], poly=SP(b['poly']),
                          **({'ground': [SP(g) for g in b['ground']], 'groundH': b['groundH']} if 'ground' in b else {})) for b in buildings]
+# 學校廣場西南、林緣的露天咖啡座（0042_128：深色四坡頂小亭＋木平台＋陽傘），電子地圖誤畫為 3 層樓量體，改由 world.ts 建小亭
+def _in_cafe(n):
+    pts = SP(n['poly'])
+    cx = sum(p[0] for p in pts) / len(pts); cz = sum(p[1] for p in pts) / len(pts)
+    return 40 < cx < 80 and -9 < cz < 4
+neighbors = [n for n in neighbors if not _in_cafe(n)]
 out['neighbors'] = [dict(osm=n['osm'], h=round(n['floors'] * 3.2, 1), poly=SP(n['poly'])) for n in neighbors]
 out['paths'] = [dict(id=p['id'], kind=p['kind'], w=p['w'], osm=p['osm'], pts=SP(p['pts'])) for p in paths]
 out['areas'] = [dict(id=a['id'], kind=a['kind'], poly=SP(a['poly'])) for a in areas]

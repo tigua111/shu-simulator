@@ -385,6 +385,7 @@ export class CampusWorld {
     this.capture('obj:stage', '八風舞台', '', 'ground', () => this.addStage())
     this.addCampusDetails()
     this.addPlazaFurniture()
+    this.addCourtSurroundings()
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
     this.addFences()
     this.addStreetDressing()
@@ -648,6 +649,7 @@ export class CampusWorld {
       steps: { color: 0xd5cdc2, lift: 0.14 },
       covered: { color: 0xc49a83, lift: 0.12 },
       tunnel: { color: 0x5d5e62, lift: 0.08 },
+      concrete: { color: 0xb3b0a8, lift: 0.11 },
     }
     const groups = new Map<PathKind, THREE.BufferGeometry[]>()
     for (const p of PATHS) {
@@ -2039,7 +2041,8 @@ export class CampusWorld {
   /** 學校廣場東側咖啡座陽傘與西北角綠色玻璃雨棚（0052_059、0086、0096 空拍） */
   private addPlazaFurniture(): void {
     const U = PLAZA_SURVEY.umbrellas
-    const canvasMat = new THREE.MeshLambertMaterial({ color: 0xf1ede4, side: THREE.DoubleSide })
+    // 0042_128：咖啡座陽傘紅、綠、白交錯
+    const canvasMats = [0xd2475a, 0x5aa65a, 0xf1ede4].map(c => new THREE.MeshLambertMaterial({ color: c, side: THREE.DoubleSide }))
     const poleMat = new THREE.MeshLambertMaterial({ color: 0x6c6c6c })
     const tableMat = new THREE.MeshLambertMaterial({ color: 0x8a6a4c })
     let k = 0
@@ -2050,7 +2053,7 @@ export class CampusWorld {
       this.capture(`obj:umbrella-${k}`, `咖啡座陽傘 ${k}`, '', 'ground', () => {
         const y = groundHeight(p.x, p.z)
         const g = new THREE.Group()
-        const top = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 8, 1, true), canvasMat)
+        const top = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 8, 1, true), canvasMats[k % 3])
         top.position.y = 2.6
         const pl = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6), poleMat)
         pl.position.y = 1.3
@@ -2085,6 +2088,157 @@ export class CampusWorld {
     })
   }
 
+  /**
+   * 舍我樓前庭周邊（使用者藍框照片 DJI_0042_128，自大禮堂上空向西拍）：
+   * 前庭南側水泥車道西端的石砌告示牆、牆後花圃與矮牆、前庭西南角階梯（資料層 she-court-steps）、
+   * 林緣露天咖啡座（三座深色四坡頂小亭＋木平台）、主塔南面西端的半圓陽台、入口棟門廊雨遮，
+   * 以及主塔東段／附屬棟南面那條很長的米黃色半圓拱頂雨棚。
+   */
+  private addCourtSurroundings(): void {
+    const scene = this.scene
+    const at = (x: number, z: number) => groundHeight(x, z)
+    // 告示牆：水泥車道西端南側，石材牆面＋深色告示板
+    this.capture('obj:court-sign', '前庭南側告示牆', '', 'ground', () => {
+      const x = 27.5
+      const z = -9.6
+      const y = at(x, z)
+      const g = new THREE.Group()
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(6.2, 2.2, 0.7), new THREE.MeshLambertMaterial({ color: 0xbdb7ad }))
+      wall.position.y = 1.1
+      const board = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.2, 0.1), new THREE.MeshLambertMaterial({ color: 0x5b5f63 }))
+      board.position.set(0, 1.3, -0.4)
+      g.add(wall, board)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(x, y, z)
+      g.rotation.y = 0.25
+      scene.add(g)
+      for (const dx of [-2.4, -0.8, 0.8, 2.4]) this.obstacles.push({ x: x + dx, z: z - dx * 0.25, r: 0.6 })
+    })
+    // 花圃：前庭西南角、R 棟東端與階梯之間的灌木叢，外緣一道矮牆
+    this.capture('obj:court-garden', '前庭西南花圃', '', 'ground', () => {
+      const x0 = 12.8
+      const x1 = 18.6
+      const z0 = -29.5
+      const z1 = -17.5
+      const cx = (x0 + x1) / 2
+      const cz = (z0 + z1) / 2
+      const y = at(cx, cz)
+      const g = new THREE.Group()
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.9, z1 - z0), new THREE.MeshLambertMaterial({ color: 0x8d8478 }))
+      bed.position.y = 0.45
+      const shrub = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 - 0.4, 1.0, z1 - z0 - 0.4), new THREE.MeshLambertMaterial({ color: 0x3f6f35 }))
+      shrub.position.y = 1.3
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.1, z1 - z0 + 3), new THREE.MeshLambertMaterial({ color: 0xc9c3b8 }))
+      wall.position.set(x1 - cx + 0.3, 0.55, 1.5)
+      g.add(bed, shrub, wall)
+      for (const [dx, dz, r] of [[-1.2, -3.5, 1.6], [1.0, 1.5, 1.9], [-0.8, 4.2, 1.4]] as const) {
+        const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), new THREE.MeshLambertMaterial({ color: 0x4d8a3c, flatShading: true }))
+        crown.position.set(dx, 2.6 + r * 0.6, dz)
+        g.add(crown)
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(cx, y, cz)
+      scene.add(g)
+      for (let z = z0 + 1.2; z < z1; z += 2.4) for (const x of [x0 + 1.5, x1 - 1.5]) this.obstacles.push({ x, z, r: 1.6 })
+    })
+    // 林緣露天咖啡座：木平台＋三座深色四坡頂小亭
+    this.capture('obj:cafe-deck', '林緣露天咖啡座平台', '', 'ground', () => {
+      const deck = new THREE.Mesh(
+        this.ribbon([{ x: 44, z: -2.45 }, { x: 78, z: -3.45 }], 10, 0.25),
+        new THREE.MeshLambertMaterial({ color: 0x8a6448, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+      )
+      deck.receiveShadow = true
+      scene.add(deck)
+    })
+    const hutRoof = new THREE.MeshLambertMaterial({ color: 0x4a3c34, flatShading: true })
+    const hutPost = new THREE.MeshLambertMaterial({ color: 0x6b4a33 })
+    ;[
+      { x: 48.5, z: -2.5, rot: 0.15 },
+      { x: 56.5, z: -0.8, rot: 0.15 },
+      { x: 65, z: 0.4, rot: 0.15 },
+    ].forEach((h, i) => {
+      this.capture(`obj:cafe-hut-${i + 1}`, `咖啡座小亭 ${i + 1}`, '', 'ground', () => {
+        const y = at(h.x, h.z) + 0.25
+        const g = new THREE.Group()
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(3.7, 1.6, 4), hutRoof)
+        roof.rotation.y = Math.PI / 4
+        roof.position.y = 3.4
+        g.add(roof)
+        for (const sx of [-1, 1])
+          for (const sz of [-1, 1]) {
+            const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.7, 0.18), hutPost)
+            post.position.set(sx * 2.1, 1.35, sz * 2.1)
+            g.add(post)
+          }
+        const table = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.8), hutPost)
+        table.position.y = 0.75
+        g.add(table)
+        g.traverse(o => (o.castShadow = true))
+        g.position.set(h.x, y, h.z)
+        g.rotation.y = h.rot
+        scene.add(g)
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.obstacles.push({ x: h.x + sx * 2.1, z: h.z + sz * 2.1, r: 0.25 })
+      })
+    })
+    // 主塔南面西端的半圓陽台（二樓，下方一個圓形花台）
+    this.capture('obj:S-bay', '舍我樓 主塔南面半圓陽台', '', 'none', () => {
+      const x = 18.8
+      const z = -47.5
+      const y = at(x, z)
+      const mat = new THREE.MeshLambertMaterial({ color: 0xb0897a })
+      const slab = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 0.35, 16, 1, false, -Math.PI / 2, Math.PI), mat)
+      slab.position.set(x, y + 4.4, z)
+      const rail = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 1.1, 16, 1, true, -Math.PI / 2, Math.PI), new THREE.MeshLambertMaterial({ color: 0xc9a798, side: THREE.DoubleSide }))
+      rail.position.set(x, y + 5.1, z)
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.7, 14), new THREE.MeshLambertMaterial({ color: 0x9b7465 }))
+      pot.position.set(x, y + 0.35, z + 1.6)
+      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 1), new THREE.MeshLambertMaterial({ color: 0x4d8a3c, flatShading: true }))
+      bush.position.set(x, y + 1.1, z + 1.6)
+      for (const m of [slab, rail, pot, bush]) {
+        m.castShadow = true
+        scene.add(m)
+      }
+      this.obstacles.push({ x, z: z + 1.6, r: 0.9 })
+    })
+    // 入口棟門廊雨遮（穿堂東口上方）
+    this.capture('obj:SE-porch', '舍我樓 入口棟門廊雨遮', '', 'none', () => {
+      const SE = buildingById('SE')
+      const x = SE.box.x1 + 1.2
+      const z = -39
+      const m = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.4, 7.5), new THREE.MeshLambertMaterial({ color: 0x8c6152 }))
+      m.position.set(x, at(x, z) + 4.6, z)
+      m.castShadow = true
+      scene.add(m)
+    })
+    // 主塔東段／附屬棟南面的長拱頂雨棚：米黃色半透明、半圓斷面，北側貼牆、南側一排細柱
+    this.capture('obj:court-arcade', '前庭東側長拱頂雨棚', '', 'none', () => {
+      const xa = 36.5
+      const xb = 69
+      const z = -48.2
+      const len = xb - xa
+      const y = at((xa + xb) / 2, z)
+      const g = new THREE.Group()
+      const vault = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.2, 2.2, len, 14, 1, true, 0, Math.PI),
+        new THREE.MeshLambertMaterial({ color: 0xd8c896, transparent: true, opacity: 0.88, side: THREE.DoubleSide }),
+      )
+      vault.rotation.z = Math.PI / 2
+      vault.position.y = 2.9
+      g.add(vault)
+      const post = new THREE.MeshLambertMaterial({ color: 0xe6e2da })
+      for (let t = -len / 2 + 1; t <= len / 2 - 0.5; t += 4) {
+        for (const dz of [-2.1, 2.1]) {
+          const pm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.9), post)
+          pm.position.set(t, 1.45, dz)
+          g.add(pm)
+        }
+        this.obstacles.push({ x: (xa + xb) / 2 + t, z: z + 2.1, r: 0.15 })
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set((xa + xb) / 2, y, z)
+      scene.add(g)
+    })
+  }
   private addRouteArrows(): void {
     const tex = arrowTexture()
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, opacity: 0.85 })

@@ -35,7 +35,7 @@ export interface SiteBuilding {
   groundH?: number
 }
 
-export type PathKind = 'road' | 'lane' | 'footway' | 'steps' | 'covered' | 'tunnel'
+export type PathKind = 'road' | 'lane' | 'footway' | 'steps' | 'covered' | 'tunnel' | 'concrete'
 export interface SitePath {
   id: string
   kind: PathKind
