@@ -70,7 +70,7 @@ for bid, num, name, code, osm, floors, style in CAMPUS:
 # 量測底圖為 NLSC 正射 4 倍放大＋5 m 格線 she_zoom.jpg）。OSM 輪廓 245404436 把前庭也包進樓內，不再沿用。
 #   S  北側主塔：東西向長板樓 13F（層高約 3.3 m，總高約 44 m；本模型以 3.8 m 層高換算為 11.5 層），屋頂平頂設備＋大水塔，東端緊鄰 SX
 #   SE 入口棟：主塔西南、面向前庭的 10F，中段樓梯窗帶；一樓穿堂讓有頂步道（z≈-39）東西貫通
-#   R  南翼：西延的 9F 長翼，三段斜屋頂，北面為退台陽台；西端半圓樓梯塔另由 world.ts 建
+#   R  南翼：西延的 9F 長翼（北面拱廊立面，0042_030 判讀北面約在 z -35，與 OSM -36 相符），三段斜屋頂，北面為退台陽台；西端半圓樓梯塔另由 world.ts 建
 #   前庭：主塔南側、入口棟東側的粉紅色鋪面，東接學校廣場
 def L(x, z):
     return (x + OX, OY - z)
@@ -81,7 +81,7 @@ def LP(pts):
 
 
 buildings.append(dict(id='R', num='12', name='舍我樓 R', code='R', osm=245404436, floors=8.5, style='brick',
-                      poly=LP([(-31, -18), (6, -18), (6, -22), (12.5, -22), (12.5, -30.5), (-31, -30.7)])))
+                      poly=LP([(-31, -18), (6, -18), (6, -22), (12.5, -22), (12.5, -30.5), (2.5, -30.5), (2.5, -35), (-31, -35)])))
 buildings.append(dict(id='S', num='13', name='舍我樓 S', code='S', osm=245404436, floors=11.5, style='brick',
                       poly=LP([(3, -47.5), (36, -47.5), (36, -62.5), (3, -62.5)])))
 buildings.append(dict(id='SE', num='', name='舍我樓 入口棟', code='', osm=245404436, floors=9.5, style='brick',
@@ -222,6 +222,28 @@ for e in json.load(open(f'{GEO}/emap_buildings.json')):
     neighbors.append(dict(osm=-int(e['id']) - 1, floors=floors, poly=list(poly.exterior.coords)[:-1]))
     _emap_added += 1
 print('emap neighbors added', _emap_added, file=sys.stderr)
+# 舍我樓北／東北側（試院路一帶）OSM 與電子地圖都缺漏的民宅：依 NLSC 正射屋頂手描
+# （north_gap.jpg，2026-10-04；0042_030 空拍確認為 4–7 層粉色／灰色公寓，頂樓多綠色鐵皮加蓋）
+MANUAL_NB = [  # (x0, z0, x1, z1, 樓層)  場景座標 x 東、z 南
+    (-20, -162, -6.5, -145.5, 5), (-12, -166, 0, -147, 4), (10, -160, 30, -145, 5),
+    (41.5, -168, 58.5, -151, 6), (52, -150, 66, -133, 5), (67.7, -149, 75.4, -142, 4),
+    (-40, -120.5, -21, -101.5, 3), (-20.5, -111.5, -12.5, -95, 3),
+    (51, -110, 58.5, -89, 5), (60, -88.5, 68.5, -73, 4),
+    (84.6, -148.5, 98.5, -124, 5), (101.5, -161, 113.8, -150, 4), (113.8, -158, 129, -145, 5),
+    (118.5, -94.5, 129, -81, 4),
+]
+_nb_union = unary_union([Polygon(n['poly']).buffer(0) for n in neighbors])
+_manual = 0
+for i, (x0, z0, x1, z1, fl) in enumerate(MANUAL_NB):
+    poly = Polygon(LP([(x0, z0), (x1, z0), (x1, z1), (x0, z1)]))
+    poly = poly.difference(_nb_union).difference(road_union)
+    if poly.geom_type == 'MultiPolygon':
+        poly = max(poly.geoms, key=lambda g: g.area)
+    if poly.is_empty or poly.area < 25:
+        continue
+    neighbors.append(dict(osm=-9000000 - i, floors=fl, poly=list(poly.exterior.coords)[:-1]))
+    _manual += 1
+print('manual neighbors added', _manual, file=sys.stderr)
 
 # ─── 鋪面區域 ───────────────────────────────────────────
 areas = []
@@ -237,7 +259,7 @@ area('theatre', 'plaza', ring(245408151))  # 戶外劇場
 # 14 學校廣場（航照判讀：舍我樓東側至大禮堂西牆，北接後校門）
 # 舍我樓前庭（主塔南側、入口棟東側的粉紅鋪面，0045_069–074）與北側中庭（主塔西側、南翼北面退台前，0034_124）
 area('she-court', 'plaza', LP([(12.5, -30.5), (12.5, -38), (16.5, -38), (16.5, -47.5), (36, -47.5), (37, -31)]))
-area('she-yard', 'plaza', LP([(-30, -31), (2.5, -31), (2.5, -46), (-30, -46)]))
+area('she-yard', 'plaza', LP([(-30, -35), (2.5, -35), (2.5, -44), (-30, -44)]))  # 0042_030：南翼拱廊北面前的窄中庭，再往北即樹林
 area('school-plaza', 'plaza', [(365.5, 196), (365.5, 229.5), (397, 229.5), (401, 240.5), (417, 241.5), (430, 241), (430, 228), (428, 226), (428.5, 190), (424.5, 181), (416, 166), (405, 176), (392, 186), (375, 192)])
 # 大禮堂北側通道到操場（含兩段階梯）
 area('aud-apron', 'grounds', [(430, 228), (430, 236), (472, 236), (476, 222), (472, 219), (471, 227), (430, 227)])

@@ -65,8 +65,23 @@ const CANOPY_BITS = (() => {
   for (let i = 0; i < raw.length; i++) a[i] = raw.charCodeAt(i)
   return a
 })()
+/**
+ * 航照判讀時被陰影濾掉、但空拍確認為連續樹林的區塊（場景座標 x 東、z 南）。
+ * 0042_030：舍我樓主塔西側、南翼拱廊北面中庭以北一整片為濃密樹林，
+ * 正射上因主塔與南翼陰影呈暗色而被樹冠遮罩排除，模型因此出現一片空地。
+ */
+const CANOPY_PATCHES: Vec2[][] = [
+  [
+    { x: -46, z: -45 },
+    { x: 1.5, z: -45 },
+    { x: 1.5, z: -63 },
+    { x: -4, z: -78 },
+    { x: -46, z: -78 },
+  ],
+]
 /** 該點在航照上是否為樹冠 */
 export function canopyAt(x: number, z: number): boolean {
+  if (CANOPY_PATCHES.some(poly => pointInPolygon({ x, z }, poly))) return true
   const i = Math.round((x - CANOPY.minX) / CANOPY.step)
   const j = Math.round((z - CANOPY.minZ) / CANOPY.step)
   if (i < 0 || j < 0 || i >= CANOPY.nx || j >= CANOPY.nz) return false
@@ -1337,7 +1352,7 @@ export class CampusWorld {
       }
     }
     // 南翼西端半圓樓梯塔（正射：白色圓角屋頂 x -38～-30.5）
-    this.capture('obj:R-tower', '舍我樓 R 西端樓梯塔', '', 'ground', () => cyl(R.box.x0 - 2.5, -24.5, 3.3, R.h + 2))
+    this.capture('obj:R-tower', '舍我樓 R 西端樓梯塔', '', 'ground', () => cyl(R.box.x0 - 2.5, (R.box.z0 + R.box.z1) / 2, 3.4, R.h + 2))
     // 「舍我樓 She-Wo Building」大圓柱：主塔西端與入口棟交會處，字樣面向西側中庭（正射圓形屋頂 (2,-43)）
     this.capture('obj:S-tower', '舍我樓 圓柱塔（招牌）', '', 'ground', () => cyl(S.box.x0 - 0.8, -43, 3.4, S.h - 3, 'sign'))
     // 南翼北面的退台陽台（0034_124、0042_022 紅框：面向北側中庭，每層一道白色欄杆陽台）
@@ -1349,8 +1364,38 @@ export class CampusWorld {
       const zf = R.box.z0
       const base = groundHeight((x0 + x1) / 2, zf) - 0.2
       const floors = Math.floor(R.h / FLOOR_H) - 1
+      // 0042_030：北面為整片拱窗立面（每開間一拱），貼在陽台後方
+      const archTex = (() => {
+        const c = document.createElement('canvas')
+        c.width = 128
+        c.height = 128
+        const x = c.getContext('2d')!
+        x.fillStyle = '#b48b7b'
+        x.fillRect(0, 0, 128, 128)
+        x.fillStyle = '#4b3a35'
+        x.beginPath()
+        x.moveTo(26, 118)
+        x.lineTo(26, 52)
+        x.arc(64, 52, 38, Math.PI, 0)
+        x.lineTo(102, 118)
+        x.closePath()
+        x.fill()
+        x.fillStyle = '#7f98ad'
+        x.fillRect(38, 70, 52, 48)
+        x.fillStyle = '#d8cdc2'
+        x.fillRect(0, 118, 128, 10)
+        const t = new THREE.CanvasTexture(c)
+        t.colorSpace = THREE.SRGBColorSpace
+        t.wrapS = t.wrapT = THREE.RepeatWrapping
+        t.repeat.set((x1 - x0) / 3.6, floors)
+        return t
+      })()
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, floors * FLOOR_H), new THREE.MeshLambertMaterial({ map: archTex }))
+      face.rotation.y = Math.PI
+      face.position.set((x0 + x1) / 2, base + FLOOR_H * 0.5 + (floors * FLOOR_H) / 2, zf - 0.06)
+      scene.add(face)
       for (let f = 1; f <= floors; f++) {
-        const depth = 1.2 + Math.max(0, 3 - f) * 0.6
+        const depth = 0.8 + Math.max(0, 3 - f) * 0.6
         const y = base + f * FLOOR_H
         const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.28, depth), slabM)
         slab.position.set((x0 + x1) / 2, y, zf - depth / 2)
