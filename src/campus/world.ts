@@ -386,6 +386,7 @@ export class CampusWorld {
     this.addCampusDetails()
     this.addPlazaFurniture()
     this.addCourtSurroundings()
+    this.addYanlun()
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
     this.addFences()
     this.addStreetDressing()
@@ -1808,6 +1809,7 @@ export class CampusWorld {
     // 山坡樹林
     // 依正射影像樹冠遮罩種樹：只長在航照上有樹冠、且不是步道／建物／場地的位置
     const noTree = AREAS.filter(a => a.kind === 'sports' || a.kind === 'court' || a.kind === 'field' || a.kind === 'plaza')
+    const plazaAreas = AREAS.filter(a => a.kind === 'plaza')
     let guard = 0
     while (trees.length < 5600 && guard++ < 200000) {
       const x = BOUNDS.minX + r() * (BOUNDS.maxX - BOUNDS.minX)
@@ -1824,9 +1826,14 @@ export class CampusWorld {
         if (onPaved(p) || insideSolid(p, 2.5) || distToPolyline(p, ROUTE) < 6) continue
         if (noTree.some(a => pointInPolygon(p, a.pts))) continue
         if (BUILDINGS.some(b => pointInPolygon(p, b.pts))) continue
-      } else if (insideSolid(p, 1.5) || (h < 8 && onPaved(p))) continue
+      } else if (insideSolid(p, 1.5) || (h < 8 && onPaved(p)) || noTree.some(a => pointInPolygon(p, a.pts))) continue
       // 空拍中山坡樹冠連成一片：山坡樹放大（冠幅約 9–15 m），平地行道樹維持較小
-      trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : insideSolid(p, 6) ? 1.0 + r() * 0.3 : 1.5 + r() * 1.1 })
+      // 緊鄰廣場（言論廣場、舍我樓北側平台等）的林緣樹較小，避免樹冠蓋住廣場（13757/13765）
+      const nearPlaza = [0, 1, 2, 3, 4, 5, 6, 7].some(k => {
+        const q = { x: x + Math.cos((k * Math.PI) / 4) * 9, z: z + Math.sin((k * Math.PI) / 4) * 9 }
+        return plazaAreas.some(a => pointInPolygon(q, a.pts))
+      })
+      trees.push({ x, z, s: h < 1.6 ? 0.8 + r() * 0.5 : insideSolid(p, 6) || nearPlaza ? 0.9 + r() * 0.35 : 1.5 + r() * 1.1 })
     }
     // 學校廣場樹陣：0052_059 空拍為大禮堂前西側的規則格狀樹陣（plazaSurvey.ts）
     {
@@ -1843,9 +1850,16 @@ export class CampusWorld {
       }
     }
     // 舍我樓西側中庭西緣的棕櫚（DJI_0038_053）
-    for (const q of [{ x: -11.5, z: -38.5 }]) {
+    // 言論廣場：通識大樓前圓環南側一列大王椰子（13757/13765）
+    for (const q of [{ x: -11.5, z: -38.5 }, { x: -99, z: -19.6 }, { x: -95, z: -20.6 }, { x: -91, z: -21.6 }, { x: -87, z: -22.6 }]) {
       const obs = { x: q.x, z: q.z, r: 0.4 }
       trees.push({ x: q.x, z: q.z, s: 0.8, palm: true, obs })
+      this.obstacles.push(obs)
+    }
+    // 言論廣場：圓環東側（通識大樓東端前）的大樹
+    {
+      const obs = { x: -71.5, z: -42.5, r: 0.7 }
+      trees.push({ x: obs.x, z: obs.z, s: 1.35, obs })
       this.obstacles.push(obs)
     }
     // 操場北緣的大王椰子
@@ -2237,6 +2251,345 @@ export class CampusWorld {
       g.traverse(o => (o.castShadow = true))
       g.position.set((xa + xb) / 2, y, z)
       scene.add(g)
+    })
+  }
+  /**
+   * 言論廣場與通識大樓前（使用者自舍我樓高樓層向西拍攝 13744–13765）：
+   * 通識大樓東南面的半圓「圓環」——二樓半圓露台（紅傘）、灰色半環形雨棚、柱列與下方圓弧階梯；
+   * 廣場上的灰色條紋鋪面、黑色基座雕像、古典路燈、深灰咖啡傘、圓環南側草皮；
+   * 舍我樓 R 北側的白色張力膜雨棚、沿中庭北上小徑的長條白雨棚、木平台；
+   * 以及通識大樓與行政大樓之間的空橋（東南面 LED 看板）與灰色電梯塔。
+   */
+  private addYanlun(): void {
+    const scene = this.scene
+    const at = (x: number, z: number) => groundHeight(x, z)
+    // 圓環：圓心在通識大樓東南面上，半圓朝東南（法向 0.492, 0.870）
+    const C = { x: -91, z: -35.8 }
+    const yaw = Math.atan2(0.492, 0.87)
+    const toWorld = (lx: number, lz: number) => ({
+      x: C.x + lx * Math.cos(yaw) + lz * Math.sin(yaw),
+      z: C.z - lx * Math.sin(yaw) + lz * Math.cos(yaw),
+    })
+    const half = (r0: number, r1: number, depth: number) => {
+      const sh = new THREE.Shape()
+      const N = 32
+      for (let i = 0; i <= N; i++) {
+        const a = (Math.PI * i) / N
+        if (i === 0) sh.moveTo(r1 * Math.cos(a), r1 * Math.sin(a))
+        else sh.lineTo(r1 * Math.cos(a), r1 * Math.sin(a))
+      }
+      if (r0 > 0) for (let i = N; i >= 0; i--) sh.lineTo(r0 * Math.cos((Math.PI * i) / N), r0 * Math.sin((Math.PI * i) / N))
+      sh.closePath()
+      const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false })
+      g.rotateX(Math.PI / 2)
+      return g
+    }
+    this.capture('obj:G-rotunda', '通識大樓前圓環（半圓露台與雨棚）', '', 'ground', () => {
+      const y = at(C.x, C.z)
+      const g = new THREE.Group()
+      const stepMat = new THREE.MeshLambertMaterial({ color: 0xb98a7a })
+      ;[
+        [11, 13.2, 0.4],
+        [9, 11, 0.8],
+        [7, 9, 1.2],
+      ].forEach(([r0, r1, h]) => {
+        const m = new THREE.Mesh(half(r0, r1, h), stepMat)
+        m.position.y = h
+        m.receiveShadow = true
+        g.add(m)
+      })
+      const deck = new THREE.Mesh(half(0, 7.2, 0.5), new THREE.MeshLambertMaterial({ color: 0xa65a4a }))
+      deck.position.y = 4.8
+      const rose = new THREE.Mesh(half(2.6, 3.2, 0.05), new THREE.MeshLambertMaterial({ color: 0xd7b49a }))
+      rose.position.y = 4.85
+      const parapet = new THREE.Mesh(half(6.95, 7.2, 1.0), new THREE.MeshLambertMaterial({ color: 0xe9e6df }))
+      parapet.position.y = 5.8
+      const roof = new THREE.Mesh(half(6.0, 11.8, 0.45), new THREE.MeshLambertMaterial({ color: 0x8e9398 }))
+      roof.position.y = 8.2
+      g.add(deck, rose, parapet, roof)
+      const colMat = new THREE.MeshLambertMaterial({ color: 0xdedbd4 })
+      for (let i = 0; i < 7; i++) {
+        const a = (Math.PI * (i + 0.5)) / 7
+        const lx = 10.4 * Math.cos(a)
+        const lz = 10.4 * Math.sin(a)
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 7.8, 10), colMat)
+        col.position.set(lx, 3.9, lz)
+        g.add(col)
+        const w = toWorld(lx, lz)
+        this.obstacles.push({ x: w.x, z: w.z, r: 0.3 })
+      }
+      // 露台上的紅色陽傘
+      const red = new THREE.MeshLambertMaterial({ color: 0xd2404a, side: THREE.DoubleSide })
+      for (const lx of [-2.6, 2.6]) {
+        const top = new THREE.Mesh(new THREE.ConeGeometry(1.5, 0.55, 8, 1, true), red)
+        top.position.set(lx, 7.3, 3.6)
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.3), colMat)
+        pole.position.set(lx, 6.2, 3.6)
+        g.add(top, pole)
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(C.x, y, C.z)
+      g.rotation.y = yaw
+      scene.add(g)
+    })
+    // 灰色條紋鋪面（廣場的折線分隔帶與圓環外圍弧帶）
+    this.capture('obj:yanlun-stripes', '言論廣場灰色條紋鋪面', '', 'none', () => {
+      const lines: Vec2[][] = [
+        [{ x: -36, z: -42 }, { x: -58, z: -42 }, { x: -60.5, z: -36 }, { x: -76.5, z: -36.5 }],
+        [{ x: -79, z: -27.5 }, { x: -63, z: -22.2 }, { x: -45, z: -22.2 }],
+        [{ x: -60.5, z: -36 }, { x: -63, z: -22.2 }],
+      ]
+      const arc: Vec2[] = []
+      for (let i = 0; i <= 24; i++) {
+        const a = (Math.PI * i) / 24
+        arc.push(toWorld(14.4 * Math.cos(a), 14.4 * Math.sin(a)))
+      }
+      lines.push(arc)
+      const mat = new THREE.MeshLambertMaterial({ color: 0x7f8286, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })
+      const m = new THREE.Mesh(mergeGeometries(lines.map(l => this.ribbon(l, 1.3, 0.17))), mat)
+      m.receiveShadow = true
+      scene.add(m)
+    })
+    // 雕像：黑色兩階基座＋深色銅像
+    this.capture('obj:yanlun-statue', '言論廣場雕像', '', 'ground', () => {
+      const x = -56
+      const z = -47
+      const g = new THREE.Group()
+      const dark = new THREE.MeshLambertMaterial({ color: 0x2a2c2e })
+      const bronze = new THREE.MeshLambertMaterial({ color: 0x3b3430 })
+      const b1 = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.7, 3.8), dark)
+      b1.position.y = 0.35
+      const b2 = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.6, 2.6), dark)
+      b2.position.y = 1.0
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.45, 1.7, 10), bronze)
+      body.position.set(-0.6, 2.15, 0)
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), bronze)
+      head.position.set(-0.6, 3.2, 0)
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.3, 0.35), bronze)
+      slab.position.set(0.8, 1.95, 0.1)
+      slab.rotation.z = -0.25
+      g.add(b1, b2, body, head, slab)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(x, at(x, z), z)
+      g.rotation.y = 0.5
+      scene.add(g)
+      this.obstacles.push({ x, z, r: 2.6 })
+    })
+    // 古典黑色路燈
+    const lampMat = new THREE.MeshLambertMaterial({ color: 0x1f2124 })
+    const glow = new THREE.MeshBasicMaterial({ color: 0xfff2cc })
+    ;[
+      [-47, -40],
+      [-60, -39.5],
+      [-70, -33],
+      [-74, -25],
+      [-58, -25.5],
+      [-47, -30],
+    ].forEach(([x, z], i) => {
+      this.capture(`obj:yanlun-lamp-${i + 1}`, `言論廣場路燈 ${i + 1}`, '', 'ground', () => {
+        const g = new THREE.Group()
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.12, 3.6, 8), lampMat)
+        post.position.y = 1.8
+        const lan = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.14, 0.5, 6), glow)
+        lan.position.y = 3.85
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.3, 6), lampMat)
+        cap.position.y = 4.25
+        g.add(post, lan, cap)
+        g.position.set(x, at(x, z), z)
+        scene.add(g)
+        this.obstacles.push({ x, z, r: 0.2 })
+      })
+    })
+    // 深灰咖啡傘（廣場南側、舍我樓 R 西端前）
+    const grey = new THREE.MeshLambertMaterial({ color: 0x55595e, side: THREE.DoubleSide })
+    const pole = new THREE.MeshLambertMaterial({ color: 0x6c6c6c })
+    ;[
+      [-44, -31.5],
+      [-48.5, -28.5],
+      [-44, -25.5],
+      [-48.5, -22.8],
+    ].forEach(([x, z], i) => {
+      this.capture(`obj:yanlun-umbrella-${i + 1}`, `言論廣場咖啡傘 ${i + 1}`, '', 'ground', () => {
+        const g = new THREE.Group()
+        const top = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.55, 8, 1, true), grey)
+        top.position.y = 2.6
+        const pl = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6), pole)
+        pl.position.y = 1.3
+        const tb = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.06, 12), pole)
+        tb.position.y = 0.75
+        g.add(top, pl, tb)
+        g.traverse(o => (o.castShadow = true))
+        g.position.set(x, at(x, z), z)
+        scene.add(g)
+        this.obstacles.push({ x, z, r: 0.6 })
+      })
+    })
+    // 圓環南側草皮與矮籬
+    this.capture('obj:yanlun-lawn', '圓環南側草皮', '', 'ground', () => {
+      const x = -83
+      const z = -23.5
+      const g = new THREE.Group()
+      const lawn = new THREE.Mesh(new THREE.BoxGeometry(6, 0.25, 3.6), new THREE.MeshLambertMaterial({ color: 0x5f9e4a }))
+      lawn.position.y = 0.12
+      const hedge = new THREE.MeshLambertMaterial({ color: 0x3f6f35 })
+      for (const dz of [-1.9, 1.9]) {
+        const h = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.6, 0.35), hedge)
+        h.position.set(0, 0.3, dz)
+        g.add(h)
+      }
+      g.add(lawn)
+      g.position.set(x, at(x, z), z)
+      g.rotation.y = 0.3
+      scene.add(g)
+    })
+    // 舍我樓 R 北側白色張力膜雨棚（中庭西側階梯上方），下有長椅
+    const white = new THREE.MeshLambertMaterial({ color: 0xf4f4f1, side: THREE.DoubleSide })
+    const frame = new THREE.MeshLambertMaterial({ color: 0xd9d9d6 })
+    this.capture('obj:she-tent', '舍我樓北側白色雨棚', '', 'ground', () => {
+      const x0 = -22.5
+      const x1 = -13.5
+      const z0 = -49
+      const z1 = -41.5
+      const cx = (x0 + x1) / 2
+      const cz = (z0 + z1) / 2
+      const g = new THREE.Group()
+      const R = 6
+      const span = Math.asin((z1 - z0) / 2 / R)
+      const geo = new THREE.CylinderGeometry(R, R, x1 - x0, 18, 1, true, Math.PI / 2 - span, span * 2)
+      geo.rotateZ(Math.PI / 2)
+      const roof = new THREE.Mesh(geo, white)
+      roof.position.y = 4.2 - R
+      g.add(roof)
+      const edgeY = 4.2 - R + R * Math.cos(span)
+      for (const sx of [-1, 1])
+        for (const sz of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, edgeY), frame)
+          post.position.set(sx * ((x1 - x0) / 2), edgeY / 2, sz * ((z1 - z0) / 2))
+          g.add(post)
+          this.obstacles.push({ x: cx + sx * ((x1 - x0) / 2), z: cz + sz * ((z1 - z0) / 2), r: 0.15 })
+        }
+      const wood = new THREE.MeshLambertMaterial({ color: 0x7a5236 })
+      for (const dx of [-2.5, 0.5, 3]) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.45, 0.6), wood)
+        b.position.set(dx, 0.22, -2.6)
+        g.add(b)
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(cx, at(cx, cz), cz)
+      scene.add(g)
+    })
+    // 沿中庭北上小徑的長條白色雨棚
+    this.capture('obj:she-walk-canopy', '中庭北上小徑白色雨棚', '', 'ground', () => {
+      const x = -10.2
+      const za = -45.5
+      const zb = -57
+      const g = new THREE.Group()
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(3, 0.18, za - zb), white)
+      roof.position.y = 3.1
+      g.add(roof)
+      for (let t = 0; t <= za - zb + 0.01; t += 3.8) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.1), frame)
+        post.position.set(-1.45, 1.55, (za - zb) / 2 - t)
+        g.add(post)
+        this.obstacles.push({ x: x - 1.45, z: za - t, r: 0.12 })
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(x, at(x, (za + zb) / 2), (za + zb) / 2)
+      scene.add(g)
+    })
+    // 木平台（白雨棚西側，北緣欄杆）
+    this.capture('obj:she-deck', '舍我樓北側木平台', '', 'ground', () => {
+      const x0 = -35
+      const x1 = -24
+      const z0 = -51.5
+      const z1 = -43
+      const g = new THREE.Group()
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, z1 - z0), new THREE.MeshLambertMaterial({ color: 0xc9ab86 }))
+      deck.position.y = 0.15
+      deck.receiveShadow = true
+      g.add(deck)
+      const rail = new THREE.MeshLambertMaterial({ color: 0x4a3a2e })
+      const top = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.08, 0.08), rail)
+      top.position.set(0, 1.25, -(z1 - z0) / 2)
+      g.add(top)
+      for (let t = 0; t <= x1 - x0 + 0.01; t += 1.1) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.0, 0.06), rail)
+        b.position.set(-(x1 - x0) / 2 + t, 0.8, -(z1 - z0) / 2)
+        g.add(b)
+      }
+      const cx = (x0 + x1) / 2
+      const cz = (z0 + z1) / 2
+      g.position.set(cx, at(cx, cz), cz)
+      scene.add(g)
+    })
+    // 通識大樓 ↔ 行政大樓 空橋：兩層高的白色連通棟，懸於兩樓之間（下方仍是往圖書館的階梯）
+    const A = { x: -110.8, z: -25.1 }
+    const B = { x: -104.0, z: -30.0 }
+    const linkYaw = Math.atan2(-(B.z - A.z), B.x - A.x)
+    const len = Math.hypot(B.x - A.x, B.z - A.z) + 1.2
+    this.capture('obj:G-ADM-bridge', '通識大樓－行政大樓連結走道', '', 'ground', () => {
+      const mx = (A.x + B.x) / 2
+      const mz = (A.z + B.z) / 2
+      const g = new THREE.Group()
+      const body = new THREE.Mesh(new THREE.BoxGeometry(len, 7, 6), new THREE.MeshLambertMaterial({ color: 0xeeeeea }))
+      body.position.y = 8
+      const band = new THREE.Mesh(new THREE.BoxGeometry(len - 0.6, 1.4, 6.1), new THREE.MeshLambertMaterial({ color: 0x55626c }))
+      band.position.y = 6.6
+      const band2 = band.clone()
+      band2.position.y = 9.9
+      g.add(body, band, band2)
+      // LED 看板（面向東南的言論廣場）
+      const cv = document.createElement('canvas')
+      cv.width = 256
+      cv.height = 160
+      const ctx = cv.getContext('2d')!
+      const grd = ctx.createLinearGradient(0, 0, 256, 160)
+      grd.addColorStop(0, '#2a1440')
+      grd.addColorStop(1, '#7a1a3a')
+      ctx.fillStyle = grd
+      ctx.fillRect(0, 0, 256, 160)
+      ctx.fillStyle = '#ffd34d'
+      ctx.font = 'bold 44px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('世新大學', 128, 78)
+      ctx.fillStyle = '#ffffff'
+      ctx.font = '22px sans-serif'
+      ctx.fillText('SHIH HSIN', 128, 118)
+      const tex = new THREE.CanvasTexture(cv)
+      tex.colorSpace = THREE.SRGBColorSpace
+      const led = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 3.2), new THREE.MeshBasicMaterial({ map: tex }))
+      led.position.set(0, 7.8, 3.08)
+      const ledFrame = new THREE.Mesh(new THREE.BoxGeometry(5.6, 3.6, 0.15), new THREE.MeshLambertMaterial({ color: 0x8b2a2a }))
+      ledFrame.position.set(0, 7.8, 3.0)
+      g.add(ledFrame, led)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(mx, at(mx, mz), mz)
+      g.rotation.y = linkYaw
+      scene.add(g)
+    })
+    // 灰色玻璃電梯塔（空橋東南、圓環西側）
+    this.capture('obj:G-lift', '通識大樓前電梯塔', '', 'ground', () => {
+      const x = -102.3
+      const z = -23.2
+      const g = new THREE.Group()
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(3.2, 15, 3.2), new THREE.MeshLambertMaterial({ color: 0x5d6870 }))
+      glass.position.y = 7.5
+      const fr = new THREE.MeshLambertMaterial({ color: 0x9aa1a6 })
+      for (const sx of [-1, 1])
+        for (const sz of [-1, 1]) {
+          const c = new THREE.Mesh(new THREE.BoxGeometry(0.25, 15.2, 0.25), fr)
+          c.position.set(sx * 1.6, 7.6, sz * 1.6)
+          g.add(c)
+        }
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(2.6, 1.4, 4), new THREE.MeshLambertMaterial({ color: 0x6b7378 }))
+      cap.rotation.y = Math.PI / 4
+      cap.position.y = 15.7
+      g.add(glass, cap)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(x, at(x, z), z)
+      g.rotation.y = linkYaw
+      scene.add(g)
+      this.obstacles.push({ x, z, r: 1.7 })
     })
   }
   private addRouteArrows(): void {
