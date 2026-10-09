@@ -1,4 +1,4 @@
-import { AREAS, BOUNDS, BUILDINGS, NEIGHBORS, PATHS, bankWeight, groundHeight, terrainBaseHeight, type Box, type Vec2 } from './data'
+import { AREAS, BOUNDS, BUILDINGS, NEIGHBORS, PATHS, bankWeight, groundHeight, inStairZone, stairPartAt, terrainBaseHeight, type Box, type Vec2 } from './data'
 
 export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
   let inside = false
@@ -149,6 +149,8 @@ const PATH_BOXES = PATHS.map(p => ({ p, box: boxOf(p.pts) }))
 
 /** 位於鋪面區域或步道範圍內（不考慮建物） */
 export function onPaved(p: Vec2): boolean {
+  // 大禮堂樓梯、2F 平台與天橋（高度由 walkHeight 處理）
+  if (inStairZone(p.x, p.z) && stairPartAt(p.x, p.z)) return true
   for (const { p: path, box } of PATH_BOXES) {
     const half = path.w / 2
     if (!nearBox(p, box, half)) continue

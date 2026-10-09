@@ -117,7 +117,7 @@ function boot(): void {
   u.setMode('walk')
   editor = new BuildingEditor(canvas, explorer.camera, world, {
     change: (sel, count) =>
-      u.setEditInfo(sel ? { num: sel.num, name: sel.label, kind: sel.kind, dataLevel: sel.dataLevel, dx: sel.total.dx, dz: sel.total.dz, rotDeg: (sel.total.rot * 180) / Math.PI } : null, count),
+      u.setEditInfo(sel ? { id: sel.id, num: sel.num, name: sel.label, kind: sel.kind, dataLevel: sel.dataLevel, dx: sel.total.dx, dz: sel.total.dz, rotDeg: (sel.total.rot * 180) / Math.PI } : null, count),
   })
   const loadedCount = Object.keys(LOADED_EDITS).length
   if (loadedCount) {

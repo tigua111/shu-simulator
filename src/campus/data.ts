@@ -99,6 +99,15 @@ function rawPoly(b: (typeof SITE.buildings)[number]): Vec2[] {
   let raw = b.poly.map(v)
   if (b.id === 'D2') raw = raw.filter(p => Math.hypot(p.x - D2_LIFT.x, p.z - D2_LIFT.z) > 3)
   if (DORM_IDS.has(b.id)) raw = raw.map(shiftDorm)
+  // 2026-10-10 地面影片＋w059 空拍：大禮堂西牆其實是一直線；OSM 輪廓在 x 98–105、z −26…−4 的外凸
+  // 是 2F 高的入口平台（門廊、雨遮，見 AUD_TERRACE），主體量改沿 x = 105 西牆
+  if (b.id === 'A') {
+    const i = raw.findIndex(p => p.x < 100)
+    if (i > 0) {
+      raw = raw.filter(p => p.x >= 100)
+      raw.splice(i, 0, { x: 104.5, z: -4.0 })
+    }
+  }
   return raw
 }
 export const BUILDINGS: Building[] = SITE.buildings.map(b => {
@@ -165,8 +174,19 @@ function clipHalf(poly: Vec2[], o: Vec2, n: Vec2): Vec2[] {
   }
   return out
 }
+/** 八風舞台淨空：OSM shelter 中心，民宅輪廓離中心至少 STAGE_CLEAR m（舞台橢圓頂半長軸 6.3 m＋簷外 0.7 m） */
+const STAGE_C = v(SITE.stage.center)
+const STAGE_CLEAR = 7
 const SURVEYED: Neighbor[] = SURVEY_HOUSES.flatMap(h => {
   let pts = h.poly.map(v)
+  {
+    // 實測民宅為無人機透視對位，相對 OSM 舞台偏約 (−3.5, −6.5) m，SE2 北緣因此切進舞台：沿舞台→民宅方向切掉淨空內的部分
+    const c = centroid(pts)
+    const l = Math.hypot(c.x - STAGE_C.x, c.z - STAGE_C.z) || 1
+    const n = { x: (c.x - STAGE_C.x) / l, z: (c.z - STAGE_C.z) / l }
+    if (pts.some(p => (p.x - STAGE_C.x) * n.x + (p.z - STAGE_C.z) * n.z < STAGE_CLEAR) && l < 30)
+      pts = clipHalf(pts, { x: STAGE_C.x + n.x * STAGE_CLEAR, z: STAGE_C.z + n.z * STAGE_CLEAR }, n)
+  }
   // 與道路相交者，沿路緣切開，保留原質心那一側
   for (const pa of RAW_PATHS) {
     for (let i = 1; i < pa.pts.length; i++) {
@@ -210,7 +230,9 @@ export const NEIGHBORS: Neighbor[] = [
       const pts = n.poly.map(v)
       return { id: `nb:o${n.osm || 'i' + i}`, osm: n.osm, h: n.h, pts, box: polyBox(pts) }
     })
-    .filter(n => !SURVEYED.some(s => inPoly(centroid(n.pts), s.pts) || n.pts.some(p => inPoly(p, s.pts)) || s.pts.some(p => inPoly(p, n.pts)))),
+    .filter(n => !SURVEYED.some(s => inPoly(centroid(n.pts), s.pts) || n.pts.some(p => inPoly(p, s.pts)) || s.pts.some(p => inPoly(p, n.pts))))
+    // 國土測繪電子地圖把八風舞台本身登記成建物（−113，6.4 m 方塊），會與舞台模型重疊：剔除舞台淨空內的鄰房
+    .filter(n => Math.hypot(centroid(n.pts).x - STAGE_C.x, centroid(n.pts).z - STAGE_C.z) > STAGE_CLEAR),
   ...SURVEYED,
 ].map(n => {
   ORIGINAL_NEIGHBOR_POLYS[n.id] = n.pts
@@ -223,6 +245,8 @@ export const NEIGHBORS: Neighbor[] = [
 })
 export const PATHS: PathLine[] = SITE.paths.map(p => ({ id: p.id, kind: p.kind, w: p.w, pts: p.pts.map(v) }))
 export const AREAS: Area[] = SITE.areas.map(a => ({ id: a.id, kind: a.kind, pts: DORM_IDS.has(a.id) ? a.poly.map(v).map(shiftDorm) : a.poly.map(v) }))
+// 大禮堂西牆前（截水溝以東）：花台、SHU 字、樓梯腳與側樓梯下穿越通道的紅灰磚鋪面
+AREAS.push({ id: 'aud-front', kind: 'plaza', pts: [{ x: 96.6, z: -50 }, { x: 104.6, z: -50 }, { x: 104.6, z: -4 }, { x: 96.6, z: -4 }] })
 /** OSM 世新大學校地範圍（relation 4054406，多塊：主谷地、前校門 J/W、管院 M/OM） */
 export const CAMPUS: Vec2[][] = (SITE.campus ?? []).map(c => c.map(v))
 export const FOREST: Vec2[][] = SITE.forest.map(f => f.map(v))
@@ -296,7 +320,11 @@ export const ROUTE: Vec2[] = (() => {
     { x: a.x - n.x * 13, z: a.z - n.z * 13 },
     { x: a.x - n.x * 6, z: a.z - n.z * 6 },
   ]
-  return [...head, ...TUNNEL.pts.map(p => ({ ...p })), ...raw.slice(iExit + 1)]
+  const out = [...head, ...TUNNEL.pts.map(p => ({ ...p })), ...raw.slice(iExit + 1)]
+  // 2026-10-10：學校廣場 → 大禮堂北側改走側樓梯平台南緣，再沿西牆穿過天橋下的通道（原本斜穿樓梯位置）
+  const iAud = out.findIndex(p => Math.abs(p.x - 103) < 1.5 && Math.abs(p.z + 51.5) < 1.5)
+  if (iAud > 0) out.splice(iAud, 0, { x: 96.5, z: -40.6 }, { x: 102.3, z: -40.6 }, { x: 102.3, z: -48.6 })
+  return out
 })()
 export const START: { pos: Vec2; yaw: number } = (() => {
   const p = ROUTE[0]
@@ -739,6 +767,85 @@ export function terrainBaseHeight(x: number, z: number): number {
 /** 步行地面高程（公尺，海拔）：一樓地形＋二樓平台／圓環階梯 */
 export function groundHeight(x: number, z: number): number {
   return deckHeight(x, z, terrainBaseHeight(x, z))
+}
+
+// ─── 大禮堂西側樓梯、2F 入口平台與側門天橋（2026-10-10 地面影片 VID_20261005_115341_000–004）──────
+// 軸向對齊的矩形，高度（相對 AUD_BASE）沿 axis 由 h0（x0 或 z0 端）線性變到 h1（x1 或 z1 端）；
+// 畫面上是 0.16 m 的踏階，步行以斜面近似。over＝跨在通道上的天橋：下方另有可走地面，依目前所在高度決定上下層。
+export interface StairPart {
+  id: string
+  x0: number
+  x1: number
+  z0: number
+  z1: number
+  axis: 'x' | 'z'
+  h0: number
+  h1: number
+  over?: boolean
+  /** 起點高度改取此點地面（相對 AUD_BASE），避免樓梯腳埋進較高的地面 */
+  foot?: Vec2
+}
+/** 大禮堂 2F 入口層高度（相對廣場） */
+export const AUD_2F = 4.2
+/** 大禮堂西牆線（OSM 北段 x ≈ 104.6） */
+export const AUD_WALL_X = 104.6
+export const STAIR_PARTS: StairPart[] = [
+  // 正面大樓梯：沿西牆由北往南爬升，兩跑＋中間平台，到 2F 入口平台北緣
+  { id: 'main-1', x0: 98.7, x1: 104.3, z0: -34.6, z1: -31.0, axis: 'z', h0: 0, h1: AUD_2F / 2 },
+  { id: 'main-mid', x0: 98.7, x1: 104.3, z0: -31.0, z1: -29.6, axis: 'z', h0: AUD_2F / 2, h1: AUD_2F / 2 },
+  { id: 'main-2', x0: 98.7, x1: 104.3, z0: -29.6, z1: -26.0, axis: 'z', h0: AUD_2F / 2, h1: AUD_2F },
+  // 2F 入口平台（門廊、方柱、雨遮）
+  { id: 'terrace', x0: 98.3, x1: AUD_WALL_X, z0: -26.0, z1: -4.1, axis: 'z', h0: AUD_2F, h1: AUD_2F },
+  // 西北角側樓梯：由西往東爬升 → 平台 → 跨過沿西牆北行通道的天橋 → 2F 側門
+  { id: 'side-flight', x0: 88.4, x1: 95.9, z0: -49.4, z1: -45.6, axis: 'x', h0: 0, h1: AUD_2F, foot: { x: 88.4, z: -47.5 } },
+  { id: 'side-landing', x0: 95.9, x1: 100.0, z0: -49.4, z1: -41.8, axis: 'x', h0: AUD_2F, h1: AUD_2F },
+  { id: 'side-bridge', x0: 100.0, x1: AUD_WALL_X, z0: -44.5, z1: -41.8, axis: 'x', h0: AUD_2F, h1: AUD_2F, over: true },
+]
+export const STAIR_ZONE = (() => {
+  const pad = 1.6
+  return {
+    x0: Math.min(...STAIR_PARTS.map(s => s.x0)) - pad,
+    x1: Math.max(...STAIR_PARTS.map(s => s.x1)) + pad,
+    z0: Math.min(...STAIR_PARTS.map(s => s.z0)) - pad,
+    z1: Math.max(...STAIR_PARTS.map(s => s.z1)) + pad,
+  }
+})()
+let AUD_BASE_CACHE: number | null = null
+/** 樓梯起算的廣場高程（正面大樓梯腳） */
+export function audBase(): number {
+  if (AUD_BASE_CACHE === null) AUD_BASE_CACHE = groundHeight(101.5, -35.5)
+  return AUD_BASE_CACHE
+}
+export function inStairZone(x: number, z: number): boolean {
+  return x >= STAIR_ZONE.x0 && x <= STAIR_ZONE.x1 && z >= STAIR_ZONE.z0 && z <= STAIR_ZONE.z1
+}
+export function stairPartAt(x: number, z: number): StairPart | null {
+  for (const s of STAIR_PARTS) if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1 && !s.over) return s
+  for (const s of STAIR_PARTS) if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1) return s
+  return null
+}
+/** 樓梯段起點高度（相對 AUD_BASE） */
+export function stairH0(s: StairPart): number {
+  return s.foot ? Math.max(0, Math.min(s.h1 - 1, groundHeight(s.foot.x, s.foot.z) - audBase())) : s.h0
+}
+function partHeight(s: StairPart, x: number, z: number): number {
+  const t = s.axis === 'x' ? (x - s.x0) / (s.x1 - s.x0) : (z - s.z0) / (s.z1 - s.z0)
+  const h0 = stairH0(s)
+  return audBase() + h0 + (s.h1 - h0) * Math.max(0, Math.min(1, t))
+}
+/**
+ * 玩家站立高度：一般等於 groundHeight；大禮堂樓梯／平台上為踏面高度。
+ * 天橋下的通道有上下兩層，cur（目前站立高度）較接近哪一層就站在哪一層；未給 cur 時取地面層。
+ */
+export function walkHeight(x: number, z: number, cur?: number): number {
+  const g = groundHeight(x, z)
+  if (!inStairZone(x, z)) return g
+  const s = stairPartAt(x, z)
+  if (!s) return g
+  const h = partHeight(s, x, z)
+  if (!s.over) return h
+  if (cur === undefined) return g
+  return Math.abs(h - cur) < Math.abs(g - cur) ? h : g
 }
 
 export function smoothstep(edge0: number, edge1: number, x: number): number {

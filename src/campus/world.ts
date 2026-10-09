@@ -36,6 +36,7 @@ import { CANOPY } from './canopy'
 import { LOADED_EDITS, transformPoint, type Edit } from './edits'
 import { MovableRegistry, bindObstacles, type Movable } from './movables'
 import { PLAZA_SURVEY } from './plazaSurvey'
+import { addAuditoriumFacade, addAuditoriumFront, addBackGate, addGuardHouse, addPlazaPaving, addStage, type PlazaCtx } from './audPlaza'
 import { distToPolyline, insideSolid, isWalkable, onOpenGround, onPaved, pointInPolygon, resample, routeLength, samplePath, setHillField, type Obstacle } from './geometry'
 import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, fieldTexture, signTexture, solarTexture, stoneTexture } from './textures'
 
@@ -740,7 +741,9 @@ export class CampusWorld {
     }
     this.addNeighbors()
     this.addGateAndTunnel()
-    this.capture('obj:stage', '八風舞台', '', 'ground', () => this.addStage())
+    const pctx = this.plazaCtx()
+    addPlazaPaving(this.scene)
+    this.capture('obj:stage', '八風舞台', '', 'ground', () => addStage(pctx))
     this.addCampusDetails()
     this.addSheWoHall()
     this.addPlazaFurniture()
@@ -750,7 +753,9 @@ export class CampusWorld {
     this.addTunnelExitTerrace()
     this.addDormBank()
     this.addMgmtPlaza()
-    this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
+    this.capture('obj:back-gate', '後校門', '16', 'ground', () => addBackGate(pctx))
+    this.capture('obj:guard-house', '後校門警衛室', '', 'ground', () => addGuardHouse(pctx))
+    addAuditoriumFront(pctx)
     this.addFences()
     this.addStreetDressing()
     this.addTrees()
@@ -765,6 +770,15 @@ export class CampusWorld {
    * 把 build 期間加入場景的物件收進一個以外框中心為樞紐的群組，登錄為可移動物件。
    * build 期間加入的碰撞點也跟著移動；follow 決定移動後是否貼齊新位置的地面高度。
    */
+  /** audPlaza 模組用的建構介面 */
+  private plazaCtx(): PlazaCtx {
+    return {
+      scene: this.scene,
+      obstacles: this.obstacles,
+      capture: (id, label, num, follow, build) => this.capture(id, label, num, follow, build),
+      signPlane: (t, w, h) => this.signPlane(t, w, h),
+    }
+  }
   private capture(id: string, label: string, num: string, follow: 'ground' | 'terrain' | 'none', build: () => void): THREE.Group | null {
     const g = new THREE.Group()
     const scene = this.scene as unknown as { add: (...o: THREE.Object3D[]) => unknown }
@@ -1328,7 +1342,6 @@ export class CampusWorld {
 
   private addBuildingSigns(b: Building, g: THREE.Group, base: number, top: number): void {
     const gate = START.pos
-    const plaza = centroid(AREAS.find(a => a.id === 'school-plaza')!.pts)
     const speech = centroid(AREAS.find(a => a.id === 'speech')!.pts)
     const track = { x: TRACK.x, z: TRACK.z }
     const vertical = (text: string, color: string, bg: string, w: number, h: number) =>
@@ -1371,8 +1384,8 @@ export class CampusWorld {
         this.placeOnFace(g, b, track, vertical('世新大學', '#ffffff', '#a3122b', 2.6, 11), base + 12, 4)
         break
       case 'A':
-        this.placeOnFace(g, b, plaza, this.signPlane(signTexture('大禮堂', { color: '#b3202f', bg: '#f2f0ea' }), 6, 1.5), base + 7.6)
-        this.placeOnFace(g, b, plaza, vertical('世新我的驕傲', '#ffd84a', '#283a73', 2.4, 12), base + 13, -6)
+        // 2026-10-10 地面影片：土黃勒腳、高窗帶、灰色牆角、紫色直式布條；「大禮堂」字樣改在 2F 門廊（audPlaza）
+        addAuditoriumFacade({ signPlane: (t, w, h) => this.signPlane(t, w, h) }, g, b)
         break
       case 'M':
         this.placeOnFace(g, b, { x: b.c.x, z: b.c.z + 60 }, this.signPlane(signTexture('世新大學管理學院', { color: '#b3202f', bg: '#ffffff' }), 10, 1.4), base + 3)
@@ -2098,28 +2111,6 @@ export class CampusWorld {
     })
   }
 
-  private addStage(): void {
-    const y = groundHeight(STAGE.x, STAGE.z)
-    const wood = new THREE.MeshLambertMaterial({ color: 0x9b6b4b })
-    const deck = new THREE.Mesh(new THREE.CylinderGeometry(STAGE.r, STAGE.r, 1.0, 32), wood)
-    deck.position.set(STAGE.x, y + 0.5, STAGE.z)
-    deck.castShadow = deck.receiveShadow = true
-    this.scene.add(deck)
-    // 0037 空拍：白色橢圓膜頂
-    const roof = new THREE.Mesh(new THREE.SphereGeometry(STAGE.r + 1.6, 40, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xf7f6f2, side: THREE.DoubleSide }))
-    roof.scale.set(1.45, 0.16, 0.95)
-    roof.position.set(STAGE.x, y + 6.2, STAGE.z)
-    roof.castShadow = true
-    this.scene.add(roof)
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 5.4), new THREE.MeshLambertMaterial({ color: 0x5b4636 }))
-      post.position.set(STAGE.x + Math.cos(a) * (STAGE.r - 0.4), y + 3.5, STAGE.z + Math.sin(a) * (STAGE.r - 0.4))
-      this.scene.add(post)
-    }
-    this.obstacles.push({ x: STAGE.x, z: STAGE.z, r: STAGE.r })
-  }
-
   // ─── 依空拍影片補上的附屬構造 ──────────────────────────
   private addCampusDetails(): void {
     const scene = this.scene
@@ -2368,32 +2359,6 @@ export class CampusWorld {
     }
   }
 
-  private addBackGate(): void {
-    const y = groundHeight(BACK_GATE.x, BACK_GATE.z)
-    const len = Math.hypot(BACK_GATE.dir.x, BACK_GATE.dir.z)
-    const d = { x: BACK_GATE.dir.x / len, z: BACK_GATE.dir.z / len }
-    const perp = { x: -d.z, z: d.x }
-    const mat = new THREE.MeshLambertMaterial({ map: facadeTexture('brick') })
-    const g = new THREE.Group()
-    for (const s of [-1, 1]) {
-      const p = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5, 1.2), mat)
-      p.position.set(s * 3.2, 2.5, 0)
-      p.castShadow = true
-      g.add(p)
-      this.obstacles.push({ x: BACK_GATE.x + perp.x * s * 3.2, z: BACK_GATE.z + perp.z * s * 3.2, r: 0.8 })
-    }
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(7.6, 1.1, 1.4), new THREE.MeshLambertMaterial({ color: 0x5b5f63 }))
-    beam.position.y = 5.4
-    g.add(beam)
-    const sign = this.signPlane(signTexture('後校門', { color: '#ffffff' }), 3.8, 0.95)
-    sign.position.set(0, 5.4, -0.72)
-    sign.rotation.y = Math.PI
-    g.add(sign)
-    g.position.set(BACK_GATE.x, y, BACK_GATE.z)
-    g.rotation.y = Math.atan2(perp.x, perp.z) - Math.PI / 2
-    this.scene.add(g)
-  }
-
   // ─── 圍欄 ─────────────────────────────────────────
   /**
    * 依 0037_057–086、0042_098–114 空拍：
@@ -2498,7 +2463,7 @@ export class CampusWorld {
       }
     }
     const P = (a: [number, number][]) => a.map(([x, z]) => ({ x, z }))
-    // 後校門兩側（柱位見 addBackGate；西側止於綠色玻璃雨棚北緣）
+    // 後校門兩側紅磚矮牆＋欄杆（柱位見 audPlaza.addBackGate；西側止於警衛室北側）
     const gl = Math.hypot(BACK_GATE.dir.x, BACK_GATE.dir.z)
     const gp = { x: -BACK_GATE.dir.z / gl, z: BACK_GATE.dir.x / gl }
     const pillar = (s: number) => ({ x: BACK_GATE.x + gp.x * s * 3.9, z: BACK_GATE.z + gp.z * s * 3.9 })
@@ -2852,7 +2817,7 @@ export class CampusWorld {
     this.scene.add(pole, head)
   }
 
-  /** 學校廣場東側咖啡座陽傘與西北角綠色玻璃雨棚（0052_059、0086、0096 空拍） */
+  /** 學校廣場東側咖啡座陽傘（0052_059、0086、0096 空拍；西北角原「綠色玻璃雨棚」實為後校門警衛室，見 audPlaza.addGuardHouse） */
   private addPlazaFurniture(): void {
     const U = PLAZA_SURVEY.umbrellas
     // 0042_128：咖啡座陽傘紅、綠、白交錯
@@ -2880,26 +2845,6 @@ export class CampusWorld {
         this.obstacles.push({ x: p.x, z: p.z, r: 0.6 })
       })
     }
-    const C = PLAZA_SURVEY.canopy
-    this.capture('obj:plaza-canopy', '學校廣場綠色玻璃雨棚', '', 'ground', () => {
-      const y = groundHeight(C.x, C.z)
-      const g = new THREE.Group()
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(C.w, 0.2, C.d), new THREE.MeshLambertMaterial({ color: 0x5fae8c, transparent: true, opacity: 0.75 }))
-      glass.position.y = 3.6
-      glass.rotation.x = 0.1
-      g.add(glass)
-      const frame = new THREE.MeshLambertMaterial({ color: 0xe8e8e4 })
-      for (const sx of [-1, 1])
-        for (const sz of [-1, 1]) {
-          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.6), frame)
-          post.position.set(sx * (C.w / 2 - 0.4), 1.8 - sz * 0.45, sz * (C.d / 2 - 0.4))
-          g.add(post)
-        }
-      g.traverse(o => (o.castShadow = true))
-      g.position.set(C.x, y, C.z)
-      g.rotation.y = C.rot
-      this.scene.add(g)
-    })
   }
 
   /**

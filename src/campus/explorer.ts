@@ -1,12 +1,14 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { DESTINATION, ROUTE, START, groundHeight, type Vec2 } from './data'
+import { DESTINATION, ROUTE, START, groundHeight, inStairZone, walkHeight, type Vec2 } from './data'
 import type { Landmark } from './landmarks'
 import { resolveMove, routeLength, samplePath, type Obstacle } from './geometry'
 
 export type Mode = 'walk' | 'overview' | 'tour'
 
 const EYE = 1.65
+/** 樓梯高差判定的身體周圍取樣點（公尺） */
+const STEP_SAMPLES: [number, number][] = [[0, 0], [0.45, 0], [-0.45, 0], [0, 0.45], [0, -0.45]]
 const WALK_SPEED = 4.5
 const RUN_SPEED = 10
 const TOUR_SPEED = 7
@@ -48,6 +50,8 @@ export class Explorer {
   /** 偏好減少動態效果 */
   reducedMotion = false
   private eyeY = groundHeight(START.pos.x, START.pos.z) + EYE
+  /** 目前站立高度（樓梯／天橋分層用） */
+  private floorY = groundHeight(START.pos.x, START.pos.z)
   private keys = new Set<string>()
   private touchMove = { x: 0, y: 0 }
   private vel = { x: 0, z: 0 }
@@ -165,9 +169,10 @@ export class Explorer {
     this.pos = { ...p }
     if (look) this.yaw = Math.atan2(-(look.x - p.x), -(look.z - p.z))
     this.pitch = 0.08
-    this.eyeY = groundHeight(p.x, p.z) + EYE
+    this.floorY = walkHeight(p.x, p.z)
+    this.eyeY = this.floorY + EYE
     this.vel = { x: 0, z: 0 }
-    if (this.mode === 'overview') this.avatar.position.set(p.x, groundHeight(p.x, p.z), p.z)
+    if (this.mode === 'overview') this.avatar.position.set(p.x, this.floorY, p.z)
     this.applyWalkCamera()
   }
 
@@ -226,10 +231,30 @@ export class Explorer {
     this.vel.z += (tz - this.vel.z) * k
     if (Math.abs(this.vel.x) + Math.abs(this.vel.z) > 0.001) {
       const to = { x: this.pos.x + this.vel.x * dt, z: this.pos.z + this.vel.z * dt }
-      this.pos = resolveMove(this.pos, to, 0.9, this.obstacles)
+      const next = resolveMove(this.pos, to, 0.9, this.obstacles)
+      this.pos = inStairZone(next.x, next.z) || inStairZone(this.pos.x, this.pos.z) ? this.stepLimit(this.pos, next) : next
     }
     this.applyWalkCamera(dt)
     this.checkArrival()
+  }
+
+  /**
+   * 大禮堂樓梯一帶：不可一步跨上／掉下超過 0.75 m 的高差（平台邊緣、樓梯側面、天橋兩側、樓梯下方實心量體）。
+   * 以身體周圍 0.45 m 取樣，避免鏡頭貼進牆面；若目前位置本身就不合法（例如剛傳送），放行以免卡死。
+   */
+  private stepLimit(from: Vec2, to: Vec2): Vec2 {
+    const cur = this.floorY
+    const ok = (p: Vec2) => {
+      for (const [ox, oz] of STEP_SAMPLES) if (Math.abs(walkHeight(p.x + ox, p.z + oz, cur) - cur) > 0.75) return false
+      return true
+    }
+    if (!ok(from)) return to
+    if (ok(to)) return to
+    const sx = { x: to.x, z: from.z }
+    if (ok(sx)) return sx
+    const sz = { x: from.x, z: to.z }
+    if (ok(sz)) return sz
+    return from
   }
 
   private updateTour(dt: number): void {
@@ -261,7 +286,7 @@ export class Explorer {
       if (this.fly.t >= 1) this.fly = null
     }
     this.orbit.update()
-    this.avatar.position.set(this.pos.x, groundHeight(this.pos.x, this.pos.z), this.pos.z)
+    this.avatar.position.set(this.pos.x, walkHeight(this.pos.x, this.pos.z, this.floorY), this.pos.z)
     this.avatar.rotation.y = this.yaw
     const d = this.camera.position.distanceTo(this.orbit.target)
     this.avatar.scale.setScalar(Math.max(1, d / 100))
@@ -277,7 +302,8 @@ export class Explorer {
   }
 
   private applyWalkCamera(dt = 1): void {
-    const target = groundHeight(this.pos.x, this.pos.z) + EYE
+    this.floorY = walkHeight(this.pos.x, this.pos.z, this.floorY)
+    const target = this.floorY + EYE
     this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * 10))
     this.camera.position.set(this.pos.x, this.eyeY, this.pos.z)
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ')

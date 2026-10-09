@@ -62,7 +62,7 @@ try {
   if (!moved.ls) fail('not saved')
   await page.click('[data-edit-rot="15"]')
   await page.screenshot({ path: `${out}/e1-dragged.png`, timeout: 120_000 })
-  // 其他物件：樹（學校廣場樹陣）、路燈、前校門
+  // 其他物件：樹（學校廣場樹陣）、路燈、前校門、後校門警衛室
   const dragObj = async (pick, shot) => {
     const t = await page.evaluate(pick => {
       const { explorer, world } = window.__campus
@@ -98,6 +98,7 @@ try {
   const treeId = await dragObj('tree@58.0,-28.0', 'e1b-tree')
   const lampId = await dragObj('lamp@', 'e1c-lamp')
   const gateId = await dragObj('obj:gate', 'e1d-gate')
+  const guardId = await dragObj('obj:guard-house', 'e1e-guard')
   const obsFollow = await page.evaluate(id => {
     const { world } = window.__campus
     const m = world.movables.items.get(id)
@@ -112,7 +113,7 @@ try {
   console.log('export', JSON.stringify(ex.buildings.map(b => ({ id: b.id, name: b.name, dx: b.dx, dz: b.dz, rotDeg: b.rotDeg, ll0: b.lonlat[0] }))))
   if (ex.buildings.length !== 1 || Math.abs(ex.buildings[0].rotDeg - 15) > 0.01) fail('export content')
   console.log('export objects', JSON.stringify(ex.objects.map(o => ({ id: o.id, x: o.x, z: o.z }))))
-  if (ex.objects.length !== 3) fail('export objects count ' + ex.objects.length)
+  if (ex.objects.length !== 4) fail('export objects count ' + ex.objects.length)
   await page.reload()
   await page.waitForSelector('body.is-ready .start.is-open', { timeout: 40_000 })
   const after = await page.evaluate(id => {
@@ -121,7 +122,7 @@ try {
     return { x: p.position.x, z: p.position.z, objs }
   }, a.id)
   console.log('after reload', JSON.stringify(after))
-  for (const id of [treeId, lampId, gateId]) if (!after.objs[id]) fail('reload lost ' + id)
+  for (const id of [treeId, lampId, gateId, guardId]) if (!after.objs[id]) fail('reload lost ' + id)
   if (Math.hypot(after.x - moved.x, after.z - moved.z) > 0.5) fail('reload did not keep position')
   await page.click('[data-start="overview"]')
   await page.click('[data-edit-toggle]')

@@ -222,14 +222,16 @@ export class Ui {
     }
   }
 
-  setEditInfo(sel: { num: string; name: string; kind: string; dataLevel: boolean; dx: number; dz: number; rotDeg: number } | null, count: number): void {
+  setEditInfo(sel: { id?: string; num: string; name: string; kind: string; dataLevel: boolean; dx: number; dz: number; rotDeg: number } | null, count: number): void {
     const q = (s: string) => this.root.querySelector<HTMLElement>(s)!
     this.root.querySelector('.editbar')!.classList.toggle('has-sel', !!sel)
     if (sel) {
       q('[data-edit-num]').textContent = sel.num || '·'
       q('[data-edit-name]').textContent = sel.name === sel.kind ? sel.name : `${sel.name}（${sel.kind}）`
       const f = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(1)
-      const note = sel.dataLevel ? '・碰撞與地形於「套用並重新整理」後更新' : ''
+      // 樓梯／平台／天橋與隧道的步行高度、路徑是資料層固定的：移動只改外觀
+      const walkFixed = /^obj:(aud-main-stair|aud-terrace|aud-side-stair|tunnel)/.test(sel.id ?? '')
+      const note = sel.dataLevel ? '・碰撞與地形於「套用並重新整理」後更新' : walkFixed ? '・僅移動外觀，步行高度與路徑仍依原位置' : ''
       q('[data-edit-info]').textContent = `相對原始位置：東西 ${f(sel.dx)} m・南北 ${f(-sel.dz)} m・旋轉 ${f(sel.rotDeg)}°${note}`
     } else {
       q('[data-edit-num]').textContent = '✥'
