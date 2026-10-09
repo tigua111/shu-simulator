@@ -19,6 +19,10 @@ import {
   buildingById,
   centroid,
   groundHeight,
+  splitDelta,
+  splitPoint,
+  SPLIT_EDGE,
+  SPLIT_LEN,
   type AreaKind,
   type Building,
   type BuildingStyle,
@@ -278,6 +282,116 @@ function facadeMat(style: BuildingStyle, floorH: number, sink: number): THREE.Me
 }
 
 /** 多邊形中面向 target 的最長邊 */
+/** 橘褐色框＋藍綠玻璃的電梯塔（通識大樓前、女一舍前；街景） */
+function liftTower(g: THREE.Group, w: number, h: number): void {
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(w - 0.3, h, w - 0.3), new THREE.MeshLambertMaterial({ color: 0x3e6f6d }))
+  glass.position.y = h / 2
+  const fr = new THREE.MeshLambertMaterial({ color: 0xa5532f })
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1]) {
+      const c = new THREE.Mesh(new THREE.BoxGeometry(0.5, h + 0.4, 0.5), fr)
+      c.position.set((sx * w) / 2, (h + 0.4) / 2, (sz * w) / 2)
+      g.add(c)
+    }
+  for (let y = 3.4; y < h; y += 3.4) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.35, w + 0.1), fr)
+    band.position.y = y
+    g.add(band)
+  }
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.6, w + 0.4), fr)
+  cap.position.y = h + 0.3
+  const door = new THREE.Mesh(new THREE.BoxGeometry(w * 0.55, 2.4, w + 0.2), new THREE.MeshLambertMaterial({ color: 0x8d8f91 }))
+  door.position.y = 1.2
+  g.add(glass, cap, door)
+}
+
+/** 雙球黃色路燈（隧道出口坡道、行政大樓前；街景） */
+function globeLamp(): THREE.Group {
+  const g = new THREE.Group()
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2f3236 })
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 4.2, 8), dark)
+  pole.position.y = 2.1
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.08, 0.08), dark)
+  arm.position.y = 4.1
+  g.add(pole, arm)
+  const gm = new THREE.MeshBasicMaterial({ color: 0xf1e2a6 })
+  for (const sx of [-0.5, 0.5]) {
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8), gm)
+    b.position.set(sx, 4.4, 0)
+    g.add(b)
+  }
+  return g
+}
+
+function shopTexture(): THREE.CanvasTexture {
+  // 一張貼圖＝12 m 長、4.5 m 高的商店街立面
+  const c = document.createElement('canvas')
+  c.width = 768
+  c.height = 288
+  const x = c.getContext('2d')!
+  const py = (m: number) => 288 - (m / 4.5) * 288
+  x.fillStyle = '#34373b'
+  x.fillRect(0, 0, 768, 288)
+  const bays = 4
+  const bw = 768 / bays
+  const signs = ['#c8202b', '#2f8a3a', '#d8d1c4', '#c8202b']
+  const label = ['輕食', '便利商店', '書局', '餐飲']
+  for (let i = 0; i < bays; i++) {
+    const x0 = i * bw
+    // 店內暖光玻璃
+    const grd = x.createLinearGradient(0, py(2.8), 0, py(0))
+    grd.addColorStop(0, '#e0c58f')
+    grd.addColorStop(1, '#8a6f4a')
+    x.fillStyle = grd
+    x.fillRect(x0 + 10, py(2.8), bw - 20, py(0) - py(2.8))
+    x.fillStyle = 'rgba(30,30,30,0.55)'
+    for (let k = 1; k < 4; k++) x.fillRect(x0 + 10 + (k * (bw - 20)) / 4 - 2, py(2.8), 4, py(0) - py(2.8))
+    // 招牌帶
+    x.fillStyle = '#1f2124'
+    x.fillRect(x0 + 6, py(3.5), bw - 12, py(2.9) - py(3.5))
+    x.fillStyle = signs[i]
+    x.fillRect(x0 + 18, py(3.42), bw * 0.55, py(2.98) - py(3.42))
+    x.fillStyle = signs[i] === '#d8d1c4' ? '#333' : '#fff'
+    x.font = 'bold 26px sans-serif'
+    x.textBaseline = 'middle'
+    x.fillText(label[i], x0 + 26, (py(3.42) + py(2.98)) / 2)
+  }
+  // 柱
+  x.fillStyle = '#17181a'
+  for (let i = 0; i <= bays; i++) x.fillRect(i * bw - 7, 0, 14, 288)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.wrapS = THREE.RepeatWrapping
+  return t
+}
+
+function brickBoardTexture(): THREE.CanvasTexture {
+  // 8 m 長、4.5 m 高：紅磚牆＋公告欄
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 288
+  const x = c.getContext('2d')!
+  x.fillStyle = '#9a4b38'
+  x.fillRect(0, 0, 512, 288)
+  x.fillStyle = 'rgba(60,25,18,0.35)'
+  for (let y = 0; y < 288; y += 9) x.fillRect(0, y, 512, 1.5)
+  const py = (m: number) => 288 - (m / 4.5) * 288
+  for (const x0 of [40, 290]) {
+    x.fillStyle = '#5b3024'
+    x.fillRect(x0 - 6, py(2.1), 192, py(0.7) - py(2.1))
+    x.fillStyle = '#e9e3d6'
+    x.fillRect(x0, py(2.0), 180, py(0.8) - py(2.0))
+    x.fillStyle = '#4b7fb8'
+    x.fillRect(x0 + 12, py(1.85), 60, 26)
+    x.fillStyle = '#d9a23a'
+    x.fillRect(x0 + 96, py(1.75), 64, 34)
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.wrapS = THREE.RepeatWrapping
+  return t
+}
+
 function faceToward(pts: Vec2[], target: Vec2): { mid: Vec2; n: Vec2; len: number; yaw: number } {
   const c = centroid(pts)
   let best = { mid: pts[0], n: { x: 0, z: 1 }, len: 0, yaw: 0 }
@@ -387,6 +501,7 @@ export class CampusWorld {
     this.addPlazaFurniture()
     this.addCourtSurroundings()
     this.addYanlun()
+    this.addTunnelExitTerrace()
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
     this.addFences()
     this.addStreetDressing()
@@ -654,9 +769,11 @@ export class CampusWorld {
     }
     const groups = new Map<PathKind, THREE.BufferGeometry[]>()
     for (const p of PATHS) {
-      const g = this.ribbon(p.pts, p.w, style[p.kind].lift)
-      if (!groups.has(p.kind)) groups.set(p.kind, [])
-      groups.get(p.kind)!.push(g)
+      // 行政大樓前上層坡道為灰色斜格紋磚（街景），以水泥灰呈現
+      const kind: PathKind = p.id === 'ramp-2' ? 'concrete' : p.kind
+      const g = this.ribbon(p.pts, p.w, style[kind].lift)
+      if (!groups.has(kind)) groups.set(kind, [])
+      groups.get(kind)!.push(g)
     }
     for (const [kind, geos] of groups) {
       const mat = new THREE.MeshLambertMaterial({ color: style[kind].color, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 })
@@ -1531,33 +1648,6 @@ export class CampusWorld {
         post.position.set(px, y + 2.3, pz)
         scene.add(post)
       }
-    })
-
-    // 女一舍面向隧道坡道的綠色頂棚樓梯（0042_164）
-    this.capture('obj:D2-canopy', '綠色頂棚樓梯', '', 'ground', () => {
-      const D2 = buildingById('D2')
-      const tunnelExit = TUNNEL.pts[TUNNEL.pts.length - 1]
-      const f = faceToward(D2.pts, tunnelExit)
-      const len = Math.min(f.len, 22)
-      const cx = f.mid.x + f.n.x * 2.6
-      const cz = f.mid.z + f.n.z * 2.6
-      const y = at(cx, cz)
-      const g = new THREE.Group()
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(len, 0.25, 4), new THREE.MeshLambertMaterial({ color: 0x3fae55 }))
-      roof.position.y = 4.2
-      roof.rotation.z = 0.12
-      g.add(roof)
-      for (const s of [-0.45, 0, 0.45]) {
-        for (const d of [-1.7, 1.7]) {
-          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 4.2), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }))
-          post.position.set(s * len, 2.1 + s * len * 0.12, d)
-          g.add(post)
-        }
-      }
-      g.position.set(cx, y, cz)
-      g.rotation.y = f.yaw + Math.PI / 2
-      g.traverse(o => (o.castShadow = true))
-      scene.add(g)
     })
 
     // 新聞大樓臨木柵路的白色斜坡格柵牆（0034_26）
@@ -2567,29 +2657,289 @@ export class CampusWorld {
       g.rotation.y = linkYaw
       scene.add(g)
     })
-    // 灰色玻璃電梯塔（空橋東南、圓環西側）
+    // 街景 13765／1.45.x：橘褐色框、藍綠玻璃
     this.capture('obj:G-lift', '通識大樓前電梯塔', '', 'ground', () => {
       const x = -102.3
       const z = -23.2
       const g = new THREE.Group()
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(3.2, 15, 3.2), new THREE.MeshLambertMaterial({ color: 0x5d6870 }))
-      glass.position.y = 7.5
-      const fr = new THREE.MeshLambertMaterial({ color: 0x9aa1a6 })
-      for (const sx of [-1, 1])
-        for (const sz of [-1, 1]) {
-          const c = new THREE.Mesh(new THREE.BoxGeometry(0.25, 15.2, 0.25), fr)
-          c.position.set(sx * 1.6, 7.6, sz * 1.6)
-          g.add(c)
-        }
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(2.6, 1.4, 4), new THREE.MeshLambertMaterial({ color: 0x6b7378 }))
-      cap.rotation.y = Math.PI / 4
-      cap.position.y = 15.7
-      g.add(glass, cap)
+      liftTower(g, 3.4, 15)
       g.traverse(o => (o.castShadow = true))
       g.position.set(x, at(x, z), z)
       g.rotation.y = linkYaw
       scene.add(g)
       this.obstacles.push({ x, z, r: 1.7 })
+    })
+  }
+  /**
+   * 隧道出口 → 行政大樓的上下兩層（使用者 2026-10-05 街景截圖）：
+   * 分界線（ramp-1 北緣）上為行政大樓下層商店街店面（出口段為紅磚牆＋公告欄），頂上灰色欄杆；
+   * 上層行政大樓東南面前：紅磚花台＋圓形灌木、入口大雨庇、雙球路燈；
+   * 下層南側：出口旁垂直綠牆、雙球路燈、女一舍橘褐框電梯塔與往隧道方向下降的綠色頂棚鋼梯。
+   */
+  private addTunnelExitTerrace(): void {
+    const scene = this.scene
+    const at = (x: number, z: number) => groundHeight(x, z)
+    const E = SPLIT_EDGE
+    const lowAt = (s: number) => {
+      const p = splitPoint(s, E - 0.05)
+      return at(p.x, p.z)
+    }
+    const upAt = (s: number) => {
+      const p = splitPoint(s, E + 0.05)
+      return at(p.x, p.z)
+    }
+    const wallStrip = (s0: number, s1: number, mat: THREE.Material, uLen: number) => {
+      const pos: number[] = []
+      const uv: number[] = []
+      const idx: number[] = []
+      const n = Math.max(2, Math.ceil((s1 - s0) / 1))
+      for (let i = 0; i <= n; i++) {
+        const t = s0 + ((s1 - s0) * i) / n
+        const p = splitPoint(t, E)
+        const y0 = lowAt(t) - 0.3
+        const y1 = upAt(t) + (mat === shopMatRef ? 0.05 : 0.9)
+        pos.push(p.x, y0, p.z, p.x, y1, p.z)
+        uv.push(t / uLen, -0.3 / 4.5, t / uLen, (y1 - y0 - 0.3) / 4.5)
+        if (i < n) {
+          const k = i * 2
+          idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3)
+        }
+      }
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+      g.setIndex(idx)
+      g.computeVertexNormals()
+      const m = new THREE.Mesh(g, mat)
+      m.castShadow = true
+      m.receiveShadow = true
+      scene.add(m)
+    }
+    // 整片鋪面：下層粉紅磚（出口外寬廣場、往東收窄）、上層灰色格紋磚（至行政大樓東南面）
+    const pave = (s0: number, s1: number, oA: (s: number) => number, oB: (s: number) => number, color: number, lift: number) => {
+      const pos: number[] = []
+      const idx: number[] = []
+      const n = Math.max(2, Math.ceil(s1 - s0))
+      const K = 4
+      for (let i = 0; i <= n; i++) {
+        const t = s0 + ((s1 - s0) * i) / n
+        for (let k = 0; k <= K; k++) {
+          const o = oA(t) + ((oB(t) - oA(t)) * k) / K
+          const p = splitPoint(t, o)
+          pos.push(p.x, at(p.x, p.z) + lift, p.z)
+          if (i < n && k < K) {
+            const a = i * (K + 1) + k
+            idx.push(a, a + K + 1, a + 1, a + 1, a + K + 1, a + K + 2)
+          }
+        }
+      }
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+      g.setIndex(idx)
+      g.computeVertexNormals()
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }))
+      m.receiveShadow = true
+      scene.add(m)
+    }
+    pave(0.5, SPLIT_LEN, t => (t < 20 ? -3.6 : -2.9), () => E - 0.06, 0xa86b5b, 0.1)
+    pave(9, SPLIT_LEN, () => E + 0.06, t => E + (t < 30 ? 5.5 : t < 42 ? 5.5 + (t - 30) * 0.6 : 12.7), 0xa3a19c, 0.11)
+    const shopMat = new THREE.MeshLambertMaterial({ map: shopTexture(), side: THREE.DoubleSide })
+    const shopMatRef = shopMat
+    const brickMat = new THREE.MeshLambertMaterial({ map: brickBoardTexture(), side: THREE.DoubleSide })
+    const S_BRICK = 9
+    const S_SHOP = 19
+    const S_END = SPLIT_LEN - 0.5
+    // 店面牆＋擋土牆（拖曳時整段一起移動；兩層高程屬地形資料，不隨之改變）
+    this.capture('obj:adm-shops', '行政大樓下層商店街', '', 'none', () => {
+      wallStrip(S_BRICK, S_SHOP, brickMat, 8)
+      wallStrip(S_SHOP, S_END, shopMat, 12)
+      // 店面雨庇與黑色方柱
+      const awn = new THREE.MeshLambertMaterial({ color: 0x2a2c2f })
+      const col = new THREE.MeshLambertMaterial({ color: 0x151618 })
+      for (let t = S_SHOP; t < S_END - 1; t += 3) {
+        const a = splitPoint(t, E - 0.9)
+        const b = splitPoint(t + 3, E - 0.9)
+        const y = lowAt(t + 1.5) + 3.0
+        const m = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.18, 1.8), awn)
+        m.position.set((a.x + b.x) / 2, y, (a.z + b.z) / 2)
+        m.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x)
+        scene.add(m)
+      }
+      for (let t = S_SHOP + 2; t < S_END - 1; t += 6) {
+        const p = splitPoint(t, E - 1.6)
+        const y = lowAt(t)
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.0, 0.35), col)
+        m.position.set(p.x, y + 1.5, p.z)
+        scene.add(m)
+        this.obstacles.push({ x: p.x, z: p.z, r: 0.25 })
+      }
+      // 上層外緣灰色欄杆
+      const rail = new THREE.MeshLambertMaterial({ color: 0x9aa0a4 })
+      for (let t = S_SHOP; t < S_END; t += 2) {
+        const a = splitPoint(t, E + 0.2)
+        const b = splitPoint(Math.min(S_END, t + 2), E + 0.2)
+        const ya = upAt(t)
+        const yb = upAt(Math.min(S_END, t + 2))
+        const len = Math.hypot(b.x - a.x, b.z - a.z)
+        const top = new THREE.Mesh(new THREE.BoxGeometry(len, 0.08, 0.08), rail)
+        top.position.set((a.x + b.x) / 2, (ya + yb) / 2 + 1.1, (a.z + b.z) / 2)
+        top.rotation.order = 'YZX'
+        top.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x)
+        top.rotation.z = Math.atan2(yb - ya, len)
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.1, 0.07), rail)
+        post.position.set(a.x, ya + 0.55, a.z)
+        scene.add(top, post)
+      }
+      // 分界線不可跨越（高差 > 0.4 m 處）
+      for (let t = 4; t < S_END; t += 0.8) {
+        if (splitDelta(t) < 0.4) continue
+        const p = splitPoint(t, E)
+        this.obstacles.push({ x: p.x, z: p.z, r: 0.45 })
+      }
+    })
+
+    // 行政大樓東南面前：紅磚花台＋圓形灌木、入口雨庇
+    const A0 = { x: -138.7, z: 4.1 }
+    const A1 = { x: -106.2, z: -18.7 }
+    const aLen = Math.hypot(A1.x - A0.x, A1.z - A0.z)
+    const ad = { x: (A1.x - A0.x) / aLen, z: (A1.z - A0.z) / aLen }
+    const an = { x: -ad.z, z: ad.x } // 朝東南（遠離大樓）
+    const aYaw = Math.atan2(-ad.z, ad.x)
+    const onFace = (t: number, off: number) => ({ x: A0.x + ad.x * t + an.x * off, z: A0.z + ad.z * t + an.z * off })
+    this.capture('obj:adm-planters', '行政大樓前紅磚花台', '', 'none', () => {
+      const brick = new THREE.MeshLambertMaterial({ color: 0x9c4a39 })
+      const soil = new THREE.MeshLambertMaterial({ color: 0x2f5a2c })
+      const shrub = new THREE.MeshLambertMaterial({ color: 0x2c5a2a })
+      for (const [t0, t1] of [
+        [1.5, 21],
+        [29, 38.5],
+      ]) {
+        for (let t = t0; t < t1; t += 2.5) {
+          const len = Math.min(2.5, t1 - t)
+          const p = onFace(t + len / 2, 1.1)
+          const y = at(p.x, p.z)
+          const box = new THREE.Mesh(new THREE.BoxGeometry(len, 0.8, 1.5), brick)
+          box.position.set(p.x, y + 0.4, p.z)
+          box.rotation.y = aYaw
+          const top = new THREE.Mesh(new THREE.BoxGeometry(len - 0.1, 0.06, 1.3), soil)
+          top.position.set(p.x, y + 0.82, p.z)
+          top.rotation.y = aYaw
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), shrub)
+          b.position.set(p.x, y + 1.25, p.z)
+          b.scale.y = 0.85
+          scene.add(box, top, b)
+        }
+      }
+    })
+    this.capture('obj:adm-porch', '行政大樓入口雨庇', '', 'ground', () => {
+      const p = onFace(25, 2.4)
+      const y = at(p.x, p.z)
+      const g = new THREE.Group()
+      const white = new THREE.MeshLambertMaterial({ color: 0xeeeeea })
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(7, 0.5, 5), white)
+      slab.position.y = 4.6
+      g.add(slab)
+      for (const sx of [-3, 3]) {
+        const c = new THREE.Mesh(new THREE.BoxGeometry(0.5, 4.4, 0.5), white)
+        c.position.set(sx, 2.2, 2.1)
+        g.add(c)
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(p.x, y, p.z)
+      g.rotation.y = aYaw
+      scene.add(g)
+      for (const sx of [-3, 3]) {
+        const q = { x: p.x + ad.x * sx + an.x * 2.1, z: p.z + ad.z * sx + an.z * 2.1 }
+        this.obstacles.push({ x: q.x, z: q.z, r: 0.35 })
+      }
+    })
+
+    // 雙球路燈：上層沿行政大樓、下層沿步道南緣
+    const lamps: Vec2[] = []
+    for (const t of [4, 13, 33]) lamps.push(onFace(t, 2.6))
+    for (const t of [14, 27, 40, 62, 72]) lamps.push(splitPoint(t, -3.3))
+    lamps.forEach((p, i) => {
+      this.capture(`obj:globe-lamp-${i + 1}`, '雙球路燈', '', 'ground', () => {
+        const g = globeLamp()
+        g.position.set(p.x, at(p.x, p.z), p.z)
+        g.traverse(o => (o.castShadow = true))
+        scene.add(g)
+        this.obstacles.push({ x: p.x, z: p.z, r: 0.25 })
+      })
+    })
+
+    // 出口旁南側垂直綠牆（擋土牆覆滿植栽）
+    this.capture('obj:exit-greenwall', '隧道出口垂直綠牆', '', 'none', () => {
+      const mat = new THREE.MeshLambertMaterial({ color: 0x3d6b33 })
+      const mat2 = new THREE.MeshLambertMaterial({ color: 0x4f8040 })
+      for (let t = 1; t < 20; t += 2) {
+        const a = splitPoint(t, -3.9)
+        const b = splitPoint(t + 2, -3.9)
+        const y = at((a.x + b.x) / 2, (a.z + b.z) / 2)
+        const h = 4.6 + Math.sin(t) * 0.5
+        const m = new THREE.Mesh(new THREE.BoxGeometry(2.05, h, 0.9), t % 4 < 2 ? mat : mat2)
+        m.position.set((a.x + b.x) / 2, y + h / 2 - 0.3, (a.z + b.z) / 2)
+        m.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x)
+        scene.add(m)
+        this.obstacles.push({ x: m.position.x, z: m.position.z, r: 0.9 })
+      }
+    })
+
+    // 女一舍面向步道的橘褐框電梯塔（OSM 輪廓凸出處）與往隧道口方向下降的綠色頂棚鋼梯
+    const T = { x: -133.8, z: 20.2 }
+    const fd = { x: -0.821, z: 0.573 } // 沿女一舍北面、朝隧道口
+    const fYaw = Math.atan2(-fd.z, fd.x)
+    this.capture('obj:D2-lift', '女一舍電梯塔', '', 'ground', () => {
+      const g = new THREE.Group()
+      liftTower(g, 4.4, 24)
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(T.x, at(T.x, T.z), T.z)
+      g.rotation.y = fYaw
+      scene.add(g)
+      this.obstacles.push({ x: T.x, z: T.z, r: 2.6 })
+    })
+    this.capture('obj:D2-canopy', '女一舍綠色頂棚樓梯', '', 'none', () => {
+      const L = 17
+      const rise = 6.5
+      const start = { x: T.x + fd.x * 2.6 - fd.z * 0, z: T.z + fd.z * 2.6 }
+      const yTop = at(T.x, T.z) + rise
+      const g = new THREE.Group()
+      const steel = new THREE.MeshLambertMaterial({ color: 0x8f969b })
+      const green = new THREE.MeshLambertMaterial({ color: 0x35a34e })
+      const slope = Math.atan2(rise, L)
+      const run = new THREE.Mesh(new THREE.BoxGeometry(Math.hypot(L, rise), 0.3, 2.2), steel)
+      run.position.set(L / 2, -rise / 2, 0)
+      run.rotation.z = -slope
+      g.add(run)
+      const landing = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.3, 2.6), steel)
+      landing.position.set(-0.8, 0, 0)
+      g.add(landing)
+      // 鋸齒狀綠色頂棚：每 4.25 m 一片，前高後低
+      for (let k = 0; k < 4; k++) {
+        const x0 = (k * L) / 4
+        const y = -rise * ((x0 + L / 8) / L) + 2.9
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(L / 4 + 0.15, 0.15, 2.8), green)
+        roof.position.set(x0 + L / 8, y, 0)
+        roof.rotation.z = -Math.atan2(rise, L) + 0.12
+        // 側面欄杆
+        for (const sz of [-1.05, 1.05]) {
+          const r = new THREE.Mesh(new THREE.BoxGeometry(L / 4, 0.06, 0.06), steel)
+          r.position.set(x0 + L / 8, -rise * ((x0 + L / 8) / L) + 1.0, sz)
+          r.rotation.z = -Math.atan2(rise, L)
+          g.add(r)
+        }
+        g.add(roof)
+        for (const sz of [-1.2, 1.2]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.9, 0.12), steel)
+          post.position.set(x0 + 0.3, -rise * ((x0 + 0.3) / L) + 1.45, sz)
+          g.add(post)
+        }
+      }
+      g.traverse(o => (o.castShadow = true))
+      g.position.set(start.x, yTop, start.z)
+      g.rotation.y = fYaw
+      scene.add(g)
+      for (let t = 0; t <= L; t += 1.5) this.obstacles.push({ x: start.x + fd.x * t, z: start.z + fd.z * t, r: 1.1 })
     })
   }
   private addRouteArrows(): void {

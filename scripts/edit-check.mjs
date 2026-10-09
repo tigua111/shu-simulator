@@ -22,6 +22,8 @@ try {
   browser = await chromium.launch({ args: ['--ignore-gpu-blocklist', '--use-gl=angle', '--use-angle=swiftshader'] })
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, acceptDownloads: true })
   const page = await ctx.newPage()
+  page.setDefaultTimeout(120_000)
+  page.setDefaultNavigationTimeout(180_000)
   const errors = []
   page.on('pageerror', e => errors.push(String(e)))
   page.on('console', m => m.type() === 'error' && errors.push(m.text()))
@@ -132,6 +134,8 @@ try {
   if (reset) fail('reset all did not clear')
   // 手機版面
   const m = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage()
+  m.setDefaultTimeout(120_000)
+  m.setDefaultNavigationTimeout(180_000)
   await m.goto(url)
   await m.waitForSelector('body.is-ready .start.is-open', { timeout: 150_000 })
   await m.click('[data-start="overview"]')

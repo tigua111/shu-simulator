@@ -131,8 +131,8 @@ PATHS = [
     # 前校門 → 隧道 → 坡道（主動線）
     ('gate-lane', 'lane', 7, 243939383),
     ('tunnel', 'tunnel', 7, 243939384),
-    ('ramp-1', 'lane', 7, 243939385),
-    ('ramp-2', 'lane', 6, 245410247),
+    ('ramp-1', 'lane', 5, 243939385),  # 下層：粉紅磚步道（北側為行政大樓下層商店街）
+    ('ramp-2', 'lane', 5.5, 245410247),  # 上層：行政大樓前灰磚坡道
     ('gate-walk', 'footway', 2.5, 322731840),
     ('w-steps', 'steps', 2.5, 245407010),
     ('dorm-walk', 'footway', 2.5, 661297405),
@@ -359,6 +359,8 @@ def _in_cafe(n):
     cx = sum(p[0] for p in pts) / len(pts); cz = sum(p[1] for p in pts) / len(pts)
     return 40 < cx < 80 and -9 < cz < 4
 neighbors = [n for n in neighbors if not _in_cafe(n)]
+# 隧道出口西北角：街景（2026-10-05）只見林地，電子地圖建物塊為誤判
+neighbors = [n for n in neighbors if n['osm'] not in (-106,)]
 out['neighbors'] = [dict(osm=n['osm'], h=round(n['floors'] * 3.2, 1), poly=SP(n['poly'])) for n in neighbors]
 out['paths'] = [dict(id=p['id'], kind=p['kind'], w=p['w'], osm=p['osm'], pts=SP(p['pts'])) for p in paths]
 out['areas'] = [dict(id=a['id'], kind=a['kind'], poly=SP(a['poly'])) for a in areas]

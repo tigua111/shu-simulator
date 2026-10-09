@@ -331,9 +331,116 @@ const SPORTS_BOX = SPORTS ? polyBox(SPORTS.pts) : null
 const SPORTS_Y = rawHeight(SITE.track.center[0], SITE.track.center[1])
 const FLAT_MARGIN = 10
 
+// ─── 隧道出口 → 行政大樓：上下兩層（Google 街景 2026-10-05 使用者截圖）─────────
+// 下層：沿 ramp-1 的粉紅磚步道，北側為行政大樓下層的商店街（店面牆即分界線）；
+// 上層：分界線以北、行政大樓東南面前的灰色格紋磚坡道（ramp-2），由隧道口較陡地升上行政大樓入口。
+// 以 ramp-1 中心線為基準：s＝沿線距離，o＝往北（行政大樓側）的偏移。
+const SPLIT_LINE: Vec2[] = (SITE.paths.find(p => p.id === 'ramp-1')?.pts ?? []).map(v)
+export const SPLIT_EDGE = 2.8
+const SPLIT_SEG = SPLIT_LINE.slice(1).map((b, i) => {
+  const a = SPLIT_LINE[i]
+  const len = Math.hypot(b.x - a.x, b.z - a.z) || 1
+  return { a, dx: (b.x - a.x) / len, dz: (b.z - a.z) / len, len }
+})
+export const SPLIT_LEN = SPLIT_SEG.reduce((t, g) => t + g.len, 0)
+const SPLIT_BOX = SPLIT_LINE.length
+  ? {
+      x0: Math.min(...SPLIT_LINE.map(p => p.x)) - 26,
+      x1: Math.max(...SPLIT_LINE.map(p => p.x)) + 26,
+      z0: Math.min(...SPLIT_LINE.map(p => p.z)) - 26,
+      z1: Math.max(...SPLIT_LINE.map(p => p.z)) + 26,
+    }
+  : null
+const LOWER_PROFILE: [number, number][] = [
+  [0, 16],
+  [45, 18.2],
+  [SPLIT_LEN, 22.3],
+]
+const UPPER_PROFILE: [number, number][] = [
+  [0, 16],
+  [10, 16.6],
+  [30, 21.0],
+  [45, 22.6],
+  [SPLIT_LEN, 24.0],
+]
+function profileAt(pr: [number, number][], s: number): number {
+  if (s <= pr[0][0]) return pr[0][1]
+  for (let i = 1; i < pr.length; i++)
+    if (s <= pr[i][0]) {
+      const t = (s - pr[i - 1][0]) / (pr[i][0] - pr[i - 1][0] || 1)
+      return pr[i - 1][1] + (pr[i][1] - pr[i - 1][1]) * t
+    }
+  return pr[pr.length - 1][1]
+}
+/** 上下兩層高差（公尺）：分界線上的擋土牆／店面高度 */
+export function splitDelta(s: number): number {
+  return profileAt(UPPER_PROFILE, s) - profileAt(LOWER_PROFILE, s)
+}
+/** 把點投影到 ramp-1 中心線：s 沿線距離、o 往北（左側）偏移 */
+export function splitProject(x: number, z: number): { s: number; o: number; d: number } {
+  let best = { s: 0, o: 0, d: Infinity }
+  let acc = 0
+  for (const g of SPLIT_SEG) {
+    const rx = x - g.a.x
+    const rz = z - g.a.z
+    const t = Math.max(0, Math.min(g.len, rx * g.dx + rz * g.dz))
+    const px = g.a.x + g.dx * t
+    const pz = g.a.z + g.dz * t
+    const d = Math.hypot(x - px, z - pz)
+    if (d < best.d) {
+      // 行進方向（dx,dz）的左側為北（z 向南、x 向東時，左法向 = (dz, -dx)）
+      const o = rx * g.dz - rz * g.dx
+      best = { s: acc + rx * g.dx + rz * g.dz, o, d }
+    }
+    acc += g.len
+  }
+  return best
+}
+/** 分界線上一點（s, 偏移 o）的平面座標 */
+export function splitPoint(s: number, o: number): Vec2 {
+  let acc = 0
+  for (const g of SPLIT_SEG) {
+    if (s <= acc + g.len || g === SPLIT_SEG[SPLIT_SEG.length - 1]) {
+      const t = s - acc
+      return { x: g.a.x + g.dx * t + g.dz * o, z: g.a.z + g.dz * t - g.dx * o }
+    }
+    acc += g.len
+  }
+  return { x: 0, z: 0 }
+}
+function splitHeight(x: number, z: number, h: number): number {
+  if (!SPLIT_BOX || x < SPLIT_BOX.x0 || x > SPLIT_BOX.x1 || z < SPLIT_BOX.z0 || z > SPLIT_BOX.z1) return h
+  const { s, o } = splitProject(x, z)
+  if (s < -4 || s > SPLIT_LEN + 12) return h
+  // 沿線兩端淡出：隧道口前 4 m、廣場端後 12 m
+  const ws = s < 0 ? 1 + s / 4 : s > SPLIT_LEN ? 1 - (s - SPLIT_LEN) / 12 : 1
+  let target: number
+  let wo: number
+  if (o >= SPLIT_EDGE) {
+    target = profileAt(UPPER_PROFILE, s)
+    wo = o <= SPLIT_EDGE + 13 ? 1 : 1 - smoothstep(SPLIT_EDGE + 13, SPLIT_EDGE + 22, o)
+  } else {
+    target = profileAt(LOWER_PROFILE, s)
+    wo = o >= -7 ? 1 : 1 - smoothstep(7, 15, -o)
+  }
+  const w = Math.max(0, Math.min(1, ws * wo))
+  return h * (1 - w) + target * w
+}
+
+// 上層坡道（ramp-2）南緣不可跨過分界線，否則鋪面會垂掛到下層
+for (const p of PATHS) {
+  if (p.id !== 'ramp-2') continue
+  const need = SPLIT_EDGE + p.w / 2 + 0.3
+  p.pts = p.pts.map(q => {
+    const { s, o } = splitProject(q.x, q.z)
+    if (s < 10 || s > SPLIT_LEN || o >= need) return q
+    return splitPoint(s, need)
+  })
+}
+
 /** 步行地面高程（公尺，海拔） */
 export function groundHeight(x: number, z: number): number {
-  const h = rawHeight(x, z)
+  const h = splitHeight(x, z, rawHeight(x, z))
   if (!SPORTS || !SPORTS_BOX) return h
   if (x < SPORTS_BOX.x0 - FLAT_MARGIN || x > SPORTS_BOX.x1 + FLAT_MARGIN || z < SPORTS_BOX.z0 - FLAT_MARGIN || z > SPORTS_BOX.z1 + FLAT_MARGIN) return h
   const d = polyDist(x, z, SPORTS.pts)

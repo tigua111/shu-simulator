@@ -19,7 +19,7 @@ export const APPEARANCE: Record<string, Appearance> = {
   J: { style: 'whiteBand', roof: 'flat', note: '0034：白灰色橫向帶窗，東端有紫色直幅布條的樓梯塔；臨木柵路有白色斜坡狀格柵牆' },
   W: { style: 'pinkTile', roof: 'flat', note: '0034：鮭魚粉色磁磚、橫向帶窗，屋頂立「世新大學」白底紅字大招牌' },
   D1: { style: 'whiteOffice', roof: 'flat', note: '0042：隧道出口旁白色低樓' },
-  D2: { style: 'orangeLouver', roof: 'flat', note: '0042：白牆配橘色直向百葉，緊鄰隧道出口坡道，旁有綠色頂棚樓梯' },
+  D2: { style: 'brick', roof: 'flat', note: '0042＋2026-10-05 街景：磚紅外牆白框窗，緊鄰隧道出口坡道，面向步道有橘褐框玻璃電梯塔與綠色頂棚樓梯' },
   D3: { style: 'whiteOffice', roof: 'flat', note: '依周邊推定白色' },
   ADM: { style: 'whiteOffice', roof: 'solar', note: '0034／0052：白色，屋頂滿鋪太陽能板，牆上「行政」字樣' },
   L: { style: 'whiteOffice', roof: 'atrium', note: '0037：白色，紅字「圖書館」招牌，頂層綠色玻璃天窗' },
