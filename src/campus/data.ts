@@ -408,6 +408,41 @@ export function splitPoint(s: number, o: number): Vec2 {
   }
   return { x: 0, z: 0 }
 }
+function lerpTable(tb: [number, number][], s: number): number {
+  return profileAt(tb, s)
+}
+/**
+ * 下層紅磚坡道南緣（o，負值＝往女一舍側）。DJI_0043 俯拍（2026-10-09）：隧道口端紅磚鋪滿谷底約 9–10 m、
+ * 中段約 7.5 m、女一舍電梯塔處讓出塔位約 6 m，往言論廣場端呈扇形放寬。
+ */
+const LOWER_SOUTH: [number, number][] = [
+  [0, -4.6],
+  [4, -5.6],
+  [30, -5.0],
+  [40, -3.3],
+  [52, -3.2],
+  [64, -7.5],
+  [SPLIT_LEN, -10],
+]
+export function lowerSouth(s: number): number {
+  return lerpTable(LOWER_SOUTH, s)
+}
+/** 上層灰磚平台起點（s）：之前紅磚鋪滿至分界牆以北 */
+export const UPPER_START = 9
+/** 上層平台未開始處，下層紅磚往北延伸到的偏移 */
+export const LOWER_NORTH_OPEN = SPLIT_EDGE + 3.5
+/** 上層灰磚平台北緣（o）：約 6 m → 電梯塔對面最窄約 5 m → 行政大樓段放寬至大樓東南面 */
+const UPPER_NORTH: [number, number][] = [
+  [UPPER_START, SPLIT_EDGE + 5.5],
+  [30, SPLIT_EDGE + 5.5],
+  [40, SPLIT_EDGE + 5.0],
+  [50, SPLIT_EDGE + 9.5],
+  [56, SPLIT_EDGE + 12.7],
+  [SPLIT_LEN, SPLIT_EDGE + 12.7],
+]
+export function upperNorth(s: number): number {
+  return lerpTable(UPPER_NORTH, s)
+}
 function splitHeight(x: number, z: number, h: number): number {
   if (!SPLIT_BOX || x < SPLIT_BOX.x0 || x > SPLIT_BOX.x1 || z < SPLIT_BOX.z0 || z > SPLIT_BOX.z1) return h
   const { s, o } = splitProject(x, z)
@@ -421,7 +456,8 @@ function splitHeight(x: number, z: number, h: number): number {
     wo = o <= SPLIT_EDGE + 13 ? 1 : 1 - smoothstep(SPLIT_EDGE + 13, SPLIT_EDGE + 22, o)
   } else {
     target = profileAt(LOWER_PROFILE, s)
-    wo = o >= -7 ? 1 : 1 - smoothstep(7, 15, -o)
+    const so = Math.min(-7, lowerSouth(Math.max(0, Math.min(SPLIT_LEN, s))) - 1.5)
+    wo = o >= so ? 1 : 1 - smoothstep(-so, -so + 8, -o)
   }
   const w = Math.max(0, Math.min(1, ws * wo))
   return h * (1 - w) + target * w
@@ -431,11 +467,38 @@ function splitHeight(x: number, z: number, h: number): number {
 for (const p of PATHS) {
   if (p.id !== 'ramp-2') continue
   const need = SPLIT_EDGE + p.w / 2 + 0.3
-  p.pts = p.pts.map(q => {
+  // DJI_0043：隧道口前全為紅磚，灰磚平台自 UPPER_START 才開始 → 坡道起點之前的頂點捨去
+  const kept = p.pts.filter(q => splitProject(q.x, q.z).s >= UPPER_START + 1)
+  p.pts = [splitPoint(UPPER_START + 0.4, need), ...kept].map(q => {
     const { s, o } = splitProject(q.x, q.z)
-    if (s < 10 || s > SPLIT_LEN || o >= need) return q
+    if (s > SPLIT_LEN || o >= need) return q
     return splitPoint(s, need)
   })
+}
+
+// 上下兩層整片鋪面：列入可步行區域（也讓樹木避開、小地圖顯示）
+if (SPLIT_LINE.length) {
+  const lower: Vec2[] = []
+  const back: Vec2[] = []
+  for (let s = 0.3; s <= SPLIT_LEN + 1e-6; s += 1) {
+    lower.push(splitPoint(s, lowerSouth(s)))
+    back.push(splitPoint(s, s < UPPER_START ? LOWER_NORTH_OPEN : SPLIT_EDGE - 0.05))
+  }
+  lower.push(splitPoint(SPLIT_LEN, lowerSouth(SPLIT_LEN)))
+  back.push(splitPoint(SPLIT_LEN, SPLIT_EDGE - 0.05))
+  // 上層起點的轉角
+  const k = back.findIndex((_, i) => 0.3 + i >= UPPER_START)
+  if (k > 0) back.splice(k, 0, splitPoint(UPPER_START, LOWER_NORTH_OPEN), splitPoint(UPPER_START, SPLIT_EDGE - 0.05))
+  AREAS.push({ id: 'tx-lower', kind: 'plaza', pts: [...lower, ...back.reverse()] })
+  const up: Vec2[] = []
+  const upBack: Vec2[] = []
+  for (let s = UPPER_START; s <= SPLIT_LEN + 1e-6; s += 1) {
+    up.push(splitPoint(s, SPLIT_EDGE + 0.05))
+    upBack.push(splitPoint(s, upperNorth(s)))
+  }
+  up.push(splitPoint(SPLIT_LEN, SPLIT_EDGE + 0.05))
+  upBack.push(splitPoint(SPLIT_LEN, upperNorth(SPLIT_LEN)))
+  AREAS.push({ id: 'tx-upper', kind: 'plaza', pts: [...up, ...upBack.reverse()] })
 }
 
 /** 步行地面高程（公尺，海拔） */

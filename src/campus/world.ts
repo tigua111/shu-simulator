@@ -21,7 +21,7 @@ import {
   centroid,
   groundHeight,
   splitDelta,
-  splitPoint,
+  splitPoint, lowerSouth, upperNorth, UPPER_START, LOWER_NORTH_OPEN,
   SPLIT_EDGE,
   SPLIT_LEN,
   type AreaKind,
@@ -2545,6 +2545,14 @@ export class CampusWorld {
       trees.push({ x: obs.x, z: obs.z, s: 1.35, obs })
       this.obstacles.push(obs)
     }
+    // 隧道出口紅磚坡道南側：女一舍電梯塔以東、玻璃弧廊以北的林帶大樹（DJI_0043 第 24 秒）
+    for (const [s, o, sc] of [[54, -8.6, 1.15], [60, -11, 1.3], [66, -12.8, 1.1]]) {
+      const q = splitPoint(s, o)
+      if (insideSolid(q, 1.5) || onPaved(q)) continue
+      const obs = { x: q.x, z: q.z, r: 0.6 }
+      trees.push({ x: q.x, z: q.z, s: sc, obs })
+      this.obstacles.push(obs)
+    }
     // 操場北緣的大王椰子
     const north = PATHS.find(p => p.id === 'track-north')
     if (north) {
@@ -3313,7 +3321,7 @@ export class CampusWorld {
       const pos: number[] = []
       const idx: number[] = []
       const n = Math.max(2, Math.ceil(s1 - s0))
-      const K = 4
+      const K = 8
       for (let i = 0; i <= n; i++) {
         const t = s0 + ((s1 - s0) * i) / n
         for (let k = 0; k <= K; k++) {
@@ -3334,8 +3342,71 @@ export class CampusWorld {
       m.receiveShadow = true
       scene.add(m)
     }
-    pave(0.5, SPLIT_LEN, t => (t < 20 ? -3.6 : -2.9), () => E - 0.06, 0xa86b5b, 0.1)
-    pave(9, SPLIT_LEN, () => E + 0.06, t => E + (t < 30 ? 5.5 : t < 42 ? 5.5 + (t - 30) * 0.6 : 12.7), 0xa3a19c, 0.11)
+    // DJI_0043 俯拍：隧道口前紅磚鋪滿谷底（上層平台未開始）、中段約 7.5 m、往言論廣場端扇形放寬
+    pave(0.5, UPPER_START, lowerSouth, () => LOWER_NORTH_OPEN, 0xa86b5b, 0.1)
+    pave(UPPER_START, SPLIT_LEN, lowerSouth, () => E - 0.06, 0xa86b5b, 0.1)
+    pave(UPPER_START, SPLIT_LEN, () => E + 0.06, upperNorth, 0xa3a19c, 0.11)
+    // 女一舍側植栽帶（照片第 31／37 秒：紅磚南緣 → 綠色頂棚鋼梯 → 宿舍之間滿是灌木與地被）
+    pave(4, 48, () => -10.5, t => lowerSouth(t) - 0.12, 0x3b6331, 0.06)
+    // 電梯塔以東至言論廣場端：紅磚南緣與玻璃弧廊之間的林帶地被（第 24 秒）
+    pave(48, 72, () => -16, t => lowerSouth(t) - 0.12, 0x34592c, 0.04)
+    {
+      const rr = rng(4307)
+      const geo = new THREE.IcosahedronGeometry(1, 1)
+      const mat = new THREE.MeshLambertMaterial({ color: 0xffffff })
+      const N = 90
+      const inst = new THREE.InstancedMesh(geo, mat, N)
+      const m4 = new THREE.Matrix4()
+      const col = new THREE.Color()
+      let n = 0
+      for (let tries = 0; n < N && tries < 2000; tries++) {
+        const t = 4 + rr() * 44
+        const o = -10 + rr() * (lowerSouth(t) - 0.9 + 10)
+        const p = splitPoint(t, o)
+        if (insideSolid(p, 0.6)) continue
+        const r0 = 0.45 + rr() * 0.55
+        m4.makeScale(r0 * (1 + rr() * 0.4), r0 * 0.75, r0 * (1 + rr() * 0.4))
+        m4.setPosition(p.x, at(p.x, p.z) + r0 * 0.45, p.z)
+        inst.setMatrixAt(n, m4)
+        inst.setColorAt(n, col.setHSL(0.27 + rr() * 0.06, 0.45, 0.22 + rr() * 0.1))
+        n++
+      }
+      inst.count = n
+      inst.castShadow = true
+      inst.receiveShadow = true
+      scene.add(inst)
+    }
+    // 紅磚上的淺色弧線（照片第 15／24／31 秒：橫越坡道、弧頂朝隧道口）
+    {
+      const lineMat = new THREE.MeshLambertMaterial({ color: 0xc9b2a6, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 })
+      for (let s0 = 6; s0 < SPLIT_LEN - 2; s0 += 8.5) {
+        const pos: number[] = []
+        const idx: number[] = []
+        const N = 12
+        const oS = lowerSouth(s0) + 0.3
+        const oN = (s0 < UPPER_START ? LOWER_NORTH_OPEN : E) - 0.3
+        for (let i = 0; i <= N; i++) {
+          const u = i / N
+          const o = oS + (oN - oS) * u
+          const sc = s0 - 1.4 * Math.sin(Math.PI * u)
+          for (const ds of [-0.13, 0.13]) {
+            const q = splitPoint(sc + ds, o)
+            pos.push(q.x, at(q.x, q.z) + 0.13, q.z)
+          }
+          if (i < N) {
+            const a = i * 2
+            idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+          }
+        }
+        const g = new THREE.BufferGeometry()
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+        g.setIndex(idx)
+        g.computeVertexNormals()
+        const m = new THREE.Mesh(g, lineMat)
+        m.receiveShadow = true
+        scene.add(m)
+      }
+    }
     const shopMat = new THREE.MeshLambertMaterial({ map: shopTexture(), side: THREE.DoubleSide })
     const shopMatRef = shopMat
     const brickMat = new THREE.MeshLambertMaterial({ map: brickBoardTexture(), side: THREE.DoubleSide })
@@ -3450,7 +3521,7 @@ export class CampusWorld {
     // 雙球路燈：上層沿行政大樓、下層沿步道南緣
     const lamps: Vec2[] = []
     for (const t of [4, 13, 33]) lamps.push(onFace(t, 2.6))
-    for (const t of [14, 27, 40, 62, 72]) lamps.push(splitPoint(t, -3.3))
+    for (const t of [14, 27, 40, 62, 72]) lamps.push(splitPoint(t, lowerSouth(t) + 0.6))
     lamps.forEach((p, i) => {
       this.capture(`obj:globe-lamp-${i + 1}`, '雙球路燈', '', 'ground', () => {
         const g = globeLamp()
@@ -3466,8 +3537,8 @@ export class CampusWorld {
       const mat = new THREE.MeshLambertMaterial({ color: 0x3d6b33 })
       const mat2 = new THREE.MeshLambertMaterial({ color: 0x4f8040 })
       for (let t = 1; t < 20; t += 2) {
-        const a = splitPoint(t, -3.9)
-        const b = splitPoint(t + 2, -3.9)
+        const a = splitPoint(t, lowerSouth(t) - 0.6)
+        const b = splitPoint(t + 2, lowerSouth(t + 2) - 0.6)
         const y = at((a.x + b.x) / 2, (a.z + b.z) / 2)
         const h = 4.6 + Math.sin(t) * 0.5
         const m = new THREE.Mesh(new THREE.BoxGeometry(2.05, h, 0.9), t % 4 < 2 ? mat : mat2)

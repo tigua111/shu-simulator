@@ -61,15 +61,19 @@ try {
     }, process.env.HIDE)
   for (const [name, [p, t]] of Object.entries(VIEWS)) {
     await page.evaluate(
-      ([p, t]) => {
+      ([p, t, fov]) => {
         const { explorer } = window.__campus
         explorer.fly = null
+        if (fov) {
+          explorer.camera.fov = fov
+          explorer.camera.updateProjectionMatrix()
+        }
         explorer.camera.position.set(p[0], p[1], p[2])
         explorer.orbit.target.set(t[0], t[1], t[2])
         explorer.orbit.update()
         explorer.update(0.016)
       },
-      [p, t],
+      [p, t, Number(process.env.FOV) || 0],
     )
     await page.waitForTimeout(1600)
     await page.screenshot({ path: `${out}/${name}.png` })
