@@ -22,6 +22,7 @@ import {
   groundHeight,
   splitDelta,
   splitPoint, lowerSouth, upperNorth, UPPER_START, LOWER_NORTH_OPEN,
+  BANK_TOE, BANK_LEN, BANK_CUT_X1, BANK_CUT_Z, bankProject, bankTop, bankWeight,
   SPLIT_EDGE,
   SPLIT_LEN,
   type AreaKind,
@@ -157,7 +158,8 @@ function buildField(): Field {
       paved[k] = pv ? 1 : 0
       const tp = tunnelParam(p)
       const inTunnel = tp.d < TUNNEL.w / 2 + 6 && tp.t > 0.02 && tp.t < 0.98
-      const seed = !inForest || (pv && !inTunnel) || insideSolid(p, 2)
+      // 宿舍坡頂平台（data.ts 的 bankHeight 已抬升）視為起算點：平台平坦、往後山才再升起
+      const seed = !inForest || (pv && !inTunnel) || insideSolid(p, 2) || bankWeight(p.x, p.z) > 0.5
       dist[k] = seed ? 0 : INF
     }
   }
@@ -284,6 +286,29 @@ function facadeMat(style: BuildingStyle, floorH: number, sink: number): THREE.Me
 
 /** 多邊形中面向 target 的最長邊 */
 /** 橘褐色框＋藍綠玻璃的電梯塔（通識大樓前、女一舍前；街景） */
+/** 女一舍面向紅磚坡道的電梯塔（坡腳）與沿女一舍北面往隧道口下降的綠色頂棚鋼梯 */
+const D2_LIFT_AT = { x: -133.8, z: 20.2 }
+const D2_STAIR_DIR = { x: -0.821, z: 0.573 }
+const D2_STAIR_A = { x: D2_LIFT_AT.x + D2_STAIR_DIR.x * 2.6, z: D2_LIFT_AT.z + D2_STAIR_DIR.z * 2.6 }
+const D2_STAIR_B = { x: D2_LIFT_AT.x + D2_STAIR_DIR.x * 19.6, z: D2_LIFT_AT.z + D2_STAIR_DIR.z * 19.6 }
+const BANK_ACC: number[] = (() => {
+  const a = [0]
+  for (let i = 1; i < BANK_TOE.length; i++) a.push(a[i - 1] + Math.hypot(BANK_TOE[i].x - BANK_TOE[i - 1].x, BANK_TOE[i].z - BANK_TOE[i - 1].z))
+  return a
+})()
+/** 宿舍山坡坡腳取樣：弧長 t 處的坡腳點與前進方向（坡面在法向 (-dir.z, dir.x) 一側＝南側） */
+function toeSample(t: number): { p: Vec2; dir: Vec2 } {
+  const toe = BANK_TOE
+  let i = 1
+  while (i < toe.length - 1 && BANK_ACC[i] < t) i++
+  const a = toe[i - 1]
+  const b = toe[i]
+  const len = BANK_ACC[i] - BANK_ACC[i - 1] || 1
+  const u = Math.max(0, Math.min(1, (t - BANK_ACC[i - 1]) / len))
+  return { p: { x: a.x + (b.x - a.x) * u, z: a.z + (b.z - a.z) * u }, dir: { x: (b.x - a.x) / len, z: (b.z - a.z) / len } }
+}
+/** 坡頂平台高程（坡腳弧長取點） */
+const plateauAt = (x: number, z: number): number => bankTop(bankProject(x, z).t)
 function liftTower(g: THREE.Group, w: number, h: number): void {
   const glass = new THREE.Mesh(new THREE.BoxGeometry(w - 0.3, h, w - 0.3), new THREE.MeshLambertMaterial({ color: 0x3e6f6d }))
   glass.position.y = h / 2
@@ -654,6 +679,7 @@ export class CampusWorld {
     this.addCourtSurroundings()
     this.addYanlun()
     this.addTunnelExitTerrace()
+    this.addDormBank()
     this.addMgmtPlaza()
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
     this.addFences()
@@ -856,7 +882,12 @@ export class CampusWorld {
       const p = { x, z }
       let set = false
       const tree = canopyAt(x, z) && !onPaved(p)
-      if (tree) {
+      const bw = bankWeight(x, z)
+      if (bw > 0.03 && bw < 0.97 && !onPaved(p)) {
+        // 宿舍山坡坡面：林下陰暗（DJI_0043_000–007）
+        c.copy(forest).offsetHSL(jitter * 0.5, 0, jitter)
+        set = true
+      } else if (tree) {
         c.copy(forest).offsetHSL(jitter * 0.5, 0, jitter)
         set = true
       } else if (hill > 0.5) {
@@ -2499,9 +2530,17 @@ export class CampusWorld {
       const z = BOUNDS.minZ + r() * (BOUNDS.maxZ - BOUNDS.minZ)
       if (!canopyAt(x, z)) continue
       const p = { x, z }
-      const h = hillAt(x, z)
+      const bw = bankWeight(x, z)
+      const h = Math.max(hillAt(x, z), bw * 10)
       const tp = tunnelParam(p)
       if (tp.d < TUNNEL.w / 2 + 2 && tp.t > -0.05 && tp.t < 1.05 && h < 11) continue
+      if (bw > 0.02) {
+        // 宿舍山坡（DJI_0043_000–012）：坡面是連成一片的闊葉林；坡腳 2 m 內留給綠籬，冠幅不蓋過紅磚坡道
+        const bp = bankProject(x, z)
+        if (bp.d < 2.2 || insideSolid(p, 1.8) || onPaved(p) || Math.hypot(x - D2_LIFT_AT.x, z - D2_LIFT_AT.z) < 4.5) continue
+        trees.push({ x, z, s: bp.d < 6 ? 1.0 + r() * 0.4 : 1.25 + r() * 0.75 })
+        continue
+      }
       // 校門正前方與門體兩側保持淨空
       if (Math.hypot(x - GATE_FRAME.a.x, z - GATE_FRAME.a.z) < GATE_CLEAR_R && gateDepth(p) < 4) continue
       if (h < 1.6) {
@@ -2552,6 +2591,18 @@ export class CampusWorld {
       const obs = { x: q.x, z: q.z, r: 0.6 }
       trees.push({ x: q.x, z: q.z, s: sc, obs })
       this.obstacles.push(obs)
+    }
+    // 宿舍山坡坡面大樹：坡面中段到坡肩一排大冠幅闊葉樹（DJI_0043_000–007）
+    {
+      const rb = rng(203)
+      for (let t = 2; t < BANK_LEN - 1; t += 4.2) {
+        const { p, dir } = toeSample(t)
+        const d = 4.5 + rb() * 6
+        const q = { x: p.x - dir.z * d, z: p.z + dir.x * d }
+        if (bankWeight(q.x, q.z) < 0.25 || insideSolid(q, 2.5) || onPaved(q)) continue
+        if (Math.hypot(q.x - D2_LIFT_AT.x, q.z - D2_LIFT_AT.z) < 5 || distToPolyline(q, [D2_STAIR_A, D2_STAIR_B]) < 3) continue
+        trees.push({ x: q.x, z: q.z, s: 1.35 + rb() * 0.6 })
+      }
     }
     // 操場北緣的大王椰子
     const north = PATHS.find(p => p.id === 'track-north')
@@ -3550,12 +3601,14 @@ export class CampusWorld {
     })
 
     // 女一舍面向步道的橘褐框電梯塔（OSM 輪廓凸出處）與往隧道口方向下降的綠色頂棚鋼梯
-    const T = { x: -133.8, z: 20.2 }
-    const fd = { x: -0.821, z: 0.573 } // 沿女一舍北面、朝隧道口
+    const T = D2_LIFT_AT
+    const fd = D2_STAIR_DIR // 沿女一舍北面、朝隧道口
+    // 坡頂平台約高出紅磚坡道 10 m（DJI_0043_000–007）：電梯塔與鋼梯都要接到平台高程
+    const yPlateau = plateauAt(T.x, T.z) + 0.15
     const fYaw = Math.atan2(-fd.z, fd.x)
     this.capture('obj:D2-lift', '女一舍電梯塔', '', 'ground', () => {
       const g = new THREE.Group()
-      liftTower(g, 4.4, 24)
+      liftTower(g, 4.4, Math.max(14, yPlateau - at(T.x, T.z) + 9))
       g.traverse(o => (o.castShadow = true))
       g.position.set(T.x, at(T.x, T.z), T.z)
       g.rotation.y = fYaw
@@ -3564,9 +3617,9 @@ export class CampusWorld {
     })
     this.capture('obj:D2-canopy', '女一舍綠色頂棚樓梯', '', 'none', () => {
       const L = 17
-      const rise = 6.5
-      const start = { x: T.x + fd.x * 2.6 - fd.z * 0, z: T.z + fd.z * 2.6 }
-      const yTop = at(T.x, T.z) + rise
+      const start = D2_STAIR_A
+      const yTop = yPlateau
+      const rise = Math.max(6.5, yTop - at(D2_STAIR_B.x, D2_STAIR_B.z))
       const g = new THREE.Group()
       const steel = new THREE.MeshLambertMaterial({ color: 0x8f969b })
       const green = new THREE.MeshLambertMaterial({ color: 0x35a34e })
@@ -3599,11 +3652,208 @@ export class CampusWorld {
           g.add(post)
         }
       }
+      // 梯段下方支柱：落到坡面
+      for (let k = 1; k < 5; k++) {
+        const lx = (k * L) / 5
+        const wx = start.x + fd.x * lx
+        const wz = start.z + fd.z * lx
+        const yRun = yTop - rise * (lx / L)
+        const hCol = yRun - terrainHeight(wx, wz)
+        if (hCol < 0.6) continue
+        for (const sz of [-0.9, 0.9]) {
+          const col = new THREE.Mesh(new THREE.BoxGeometry(0.22, hCol, 0.22), steel)
+          col.position.set(lx, -rise * (lx / L) - hCol / 2, sz)
+          g.add(col)
+        }
+      }
       g.traverse(o => (o.castShadow = true))
       g.position.set(start.x, yTop, start.z)
       g.rotation.y = fYaw
       scene.add(g)
       for (let t = 0; t <= L; t += 1.5) this.obstacles.push({ x: start.x + fd.x * t, z: start.z + fd.z * t, r: 1.1 })
+    })
+  }
+  // ─── 宿舍山坡（使用者 2026-10-09「宿舍往後走那片山沒做好」；DJI_0043_000–012 空拍）────────
+  // 紅磚坡道南緣：灰色矮牆＋小灌木綠籬 → 陡峭林坡約 10 m → 坡頂平台（女一舍、男二舍、玻璃頂走廊）；
+  // 平台東端面對施工中的 B 以混凝土擋土牆切坡（照片左下鷹架上方的灰牆）。
+  private addDormBank(): void {
+    if (BANK_TOE.length < 2) return
+    const scene = this.scene
+    const toe = BANK_TOE
+    const toeAt = toeSample
+    const nearLift = (p: Vec2, r: number) => Math.hypot(p.x - D2_LIFT_AT.x, p.z - D2_LIFT_AT.z) < r
+    // 坡腳灰色矮牆與綠籬
+    this.capture('obj:bank-toe', '宿舍山坡坡腳矮牆與綠籬', '', 'none', () => {
+      const g = new THREE.Group()
+      const wallMat = new THREE.MeshLambertMaterial({ color: 0x8c8a83 })
+      const STEP = 2
+      for (let t = 0; t < BANK_LEN - 0.3; t += STEP) {
+        const a = toeAt(t).p
+        const b = toeAt(Math.min(BANK_LEN, t + STEP)).p
+        const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }
+        if (nearLift(mid, 3)) continue
+        const len = Math.hypot(b.x - a.x, b.z - a.z)
+        const ya = groundHeight(a.x, a.z)
+        const yb = groundHeight(b.x, b.z)
+        const m = new THREE.Mesh(new THREE.BoxGeometry(len + 0.06, 1.0, 0.3), wallMat)
+        m.position.set(mid.x, (ya + yb) / 2 + 0.15, mid.z)
+        m.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x)
+        m.rotation.z = Math.atan2(yb - ya, len)
+        m.receiveShadow = true
+        g.add(m)
+      }
+      // 綠籬：坡腳內側一排修剪過的小灌木（照片中沿坡道南緣的一列淺綠色圓叢）
+      const pos: THREE.Vector3[] = []
+      for (let t = 0.5; t < BANK_LEN; t += 0.85) {
+        const { p, dir } = toeAt(t)
+        const q = { x: p.x - dir.z * 0.75, z: p.z + dir.x * 0.75 }
+        if (nearLift(q, 3) || distToPolyline(q, [D2_STAIR_A, D2_STAIR_B]) < 1.5) continue
+        pos.push(new THREE.Vector3(q.x, terrainHeight(q.x, q.z) + 0.45, q.z))
+      }
+      const hedge = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.62, 1), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), pos.length)
+      const m4 = new THREE.Matrix4()
+      const col = new THREE.Color()
+      const rr = rng(77)
+      pos.forEach((v, i) => {
+        const sc = 0.85 + rr() * 0.35
+        m4.compose(v, new THREE.Quaternion(), new THREE.Vector3(sc, sc * 0.8, sc))
+        hedge.setMatrixAt(i, m4)
+        hedge.setColorAt(i, col.setHSL(0.25 + rr() * 0.04, 0.45, 0.24 + rr() * 0.06))
+      })
+      hedge.castShadow = true
+      g.add(hedge)
+      scene.add(g)
+    })
+    // 坡面地被灌木：連續覆蓋坡面（照片中坡面幾乎看不到裸土）
+    this.capture('obj:bank-shrubs', '宿舍山坡坡面灌木', '', 'none', () => {
+      const rr = rng(91)
+      const pos: { v: THREE.Vector3; s: number }[] = []
+      for (let t = 0; t < BANK_LEN; t += 1.1) {
+        const { p, dir } = toeAt(t)
+        for (let k = 0; k < 3; k++) {
+          const d = 1.4 + rr() * 7.5
+          const q = { x: p.x - dir.z * d + (rr() - 0.5) * 1.2, z: p.z + dir.x * d + (rr() - 0.5) * 1.2 }
+          if (bankWeight(q.x, q.z) < 0.03 || insideSolid(q, 1.2) || onPaved(q) || nearLift(q, 3.2)) continue
+          if (distToPolyline(q, [D2_STAIR_A, D2_STAIR_B]) < 1.8) continue
+          const sc = 1.1 + rr() * 1.3
+          pos.push({ v: new THREE.Vector3(q.x, terrainHeight(q.x, q.z) + sc * 0.55, q.z), s: sc })
+        }
+      }
+      const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), pos.length)
+      const m4 = new THREE.Matrix4()
+      const col = new THREE.Color()
+      pos.forEach((o, i) => {
+        m4.compose(o.v, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rr() * 6.28, 0)), new THREE.Vector3(o.s * 1.15, o.s * 0.85, o.s))
+        mesh.setMatrixAt(i, m4)
+        // 空拍中坡面是淺黃綠（陽光面）與深綠交錯
+        mesh.setColorAt(i, col.setHSL(0.24 + rr() * 0.08, 0.34 + rr() * 0.18, rr() < 0.25 ? 0.24 + rr() * 0.06 : 0.13 + rr() * 0.08))
+      })
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      scene.add(mesh)
+    })
+    // B 西側切坡擋土牆（平台東端）
+    this.capture('obj:bank-cut-wall', '宿舍平台東端擋土牆', '', 'none', () => {
+      const xw = BANK_CUT_X1 - 0.1
+      const xTop = BANK_CUT_X1 - 2.6
+      const pos: number[] = []
+      const idx: number[] = []
+      const z0 = toe[toe.length - 1].z + 0.4
+      const z1 = BANK_CUT_Z + 6
+      const n = Math.ceil((z1 - z0) / 1)
+      for (let i = 0; i <= n; i++) {
+        const z = z0 + ((z1 - z0) * i) / n
+        const yb = groundHeight(xw + 0.6, z) - 0.3
+        const yt = Math.max(yb + 0.3, terrainHeight(xTop, z) + 0.3)
+        pos.push(xw, yb, z, xw, yt, z)
+        if (i > 0) {
+          const k = (i - 1) * 2
+          idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3)
+        }
+      }
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+      geo.setIndex(idx)
+      geo.computeVertexNormals()
+      const wall = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x9a978f, side: THREE.DoubleSide }))
+      wall.receiveShadow = true
+      // 牆頂壓頂
+      const cap = new THREE.Group()
+      for (let i = 0; i < n; i++) {
+        const za = z0 + ((z1 - z0) * i) / n
+        const zb = z0 + ((z1 - z0) * (i + 1)) / n
+        const ya = pos[(i * 2 + 1) * 3 + 1]
+        const yb = pos[(i * 2 + 3) * 3 + 1]
+        const c = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.3, zb - za + 0.05), new THREE.MeshLambertMaterial({ color: 0x84827b }))
+        c.position.set(xw - 0.1, (ya + yb) / 2, (za + zb) / 2)
+        c.rotation.x = -Math.atan2(yb - ya, zb - za)
+        cap.add(c)
+      }
+      const g = new THREE.Group()
+      g.add(wall, cap)
+      scene.add(g)
+    })
+    // 坡頂玻璃頂走廊：電梯塔頂 → 女一舍東北角 → 男二舍西端入口（照片 000–003 中坡頂的白色長廊）
+    this.capture('obj:dorm-corridor', '宿舍坡頂玻璃頂走廊', '', 'none', () => {
+      const line: Vec2[] = [
+        { x: -131.5, z: 20.9 },
+        { x: -128.3, z: 20.3 },
+        { x: -125.0, z: 23.4 },
+        { x: -120.0, z: 23.9 },
+        { x: -103.0, z: 19.2 },
+      ]
+      const g = new THREE.Group()
+      const deckMat = new THREE.MeshLambertMaterial({ color: 0xb9b5ad })
+      const frameMat = new THREE.MeshLambertMaterial({ color: 0xe9e7e1 })
+      const roofMat = new THREE.MeshLambertMaterial({ color: 0xdfe6e2 })
+      const glassMat = new THREE.MeshLambertMaterial({ color: 0x9fc4bd, transparent: true, opacity: 0.45, depthWrite: false })
+      const W = 3
+      for (let i = 1; i < line.length; i++) {
+        const a = line[i - 1]
+        const b = line[i]
+        const len = Math.hypot(b.x - a.x, b.z - a.z)
+        const dir = { x: (b.x - a.x) / len, z: (b.z - a.z) / len }
+        const nrm = { x: dir.z, z: -dir.x } // 北側（坡道側）
+        const ya = plateauAt(a.x, a.z) + 0.2
+        const yb = plateauAt(b.x, b.z) + 0.2
+        const yaw = Math.atan2(-dir.z, dir.x)
+        const pitch = Math.atan2(yb - ya, len)
+        const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }
+        const ym = (ya + yb) / 2
+        const box = (sx: number, sy: number, sz: number, off: number, dy: number, mat: THREE.Material) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat)
+          m.position.set(mid.x + nrm.x * off, ym + dy, mid.z + nrm.z * off)
+          m.rotation.y = yaw
+          m.rotation.z = pitch
+          g.add(m)
+          return m
+        }
+        box(len + 0.1, 0.3, W, 0, -0.15, deckMat)
+        box(len + 0.3, 0.16, W + 0.6, 0, 2.95, roofMat)
+        box(len, 1.0, 0.08, W / 2, 0.5, glassMat) // 北側玻璃欄板
+        box(len, 0.08, 0.1, W / 2, 1.05, frameMat)
+        const nCol = Math.max(1, Math.round(len / 3))
+        for (let k = 0; k <= nCol; k++) {
+          const u = k / nCol
+          const x = a.x + (b.x - a.x) * u
+          const z = a.z + (b.z - a.z) * u
+          const y = ya + (yb - ya) * u
+          for (const off of [-W / 2, W / 2]) {
+            const c = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.95, 0.16), frameMat)
+            c.position.set(x + nrm.x * off, y + 1.47, z + nrm.z * off)
+            g.add(c)
+            // 走廊懸在坡面上時的支柱
+            const gy = terrainHeight(x + nrm.x * off, z + nrm.z * off)
+            if (y - gy > 0.5) {
+              const pst = new THREE.Mesh(new THREE.BoxGeometry(0.3, y - gy, 0.3), deckMat)
+              pst.position.set(x + nrm.x * off, (y + gy) / 2 - 0.15, z + nrm.z * off)
+              g.add(pst)
+            }
+          }
+        }
+      }
+      g.traverse(o => (o.castShadow = true))
+      scene.add(g)
     })
   }
   private addRouteArrows(): void {

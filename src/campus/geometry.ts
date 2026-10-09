@@ -102,7 +102,7 @@ export const SOLIDS: Solid[] = [
   ...NEIGHBORS.map(n => ({ pts: n.pts, box: n.box })),
 ]
 
-const AREA_BOXES = AREAS.map(a => ({ a, box: boxOf(a.pts) }))
+const AREA_BOXES = AREAS.filter(a => !a.noWalk).map(a => ({ a, box: boxOf(a.pts) }))
 const PATH_BOXES = PATHS.map(p => ({ p, box: boxOf(p.pts) }))
 
 /** 位於鋪面區域或步道範圍內（不考慮建物） */

@@ -50,6 +50,8 @@ export interface Area {
   id: string
   kind: AreaKind
   pts: Vec2[]
+  /** 僅供著色／樹木避讓，不列入可步行範圍（例如坡頂平台上的宿舍空地） */
+  noWalk?: boolean
 }
 
 export function polyBox(pts: Vec2[]): Box {
@@ -81,8 +83,18 @@ export function centroid(pts: Vec2[]): Vec2 {
   return { x: cx / (3 * a), z: cz / (3 * a) }
 }
 
-export const BUILDINGS: Building[] = SITE.buildings.map(b => {
+/**
+ * 原始輪廓的局部修正：女一舍 OSM 輪廓北角朝坡道的凸出處即面向步道的電梯塔
+ * （另以 obj:D2-lift 建模、立於下層紅磚高程），自宿舍量體移除，宿舍本體留在坡頂平台。
+ */
+const D2_LIFT = { x: -133.8, z: 20.2 }
+function rawPoly(b: (typeof SITE.buildings)[number]): Vec2[] {
   const raw = b.poly.map(v)
+  if (b.id === 'D2') return raw.filter(p => Math.hypot(p.x - D2_LIFT.x, p.z - D2_LIFT.z) > 3)
+  return raw
+}
+export const BUILDINGS: Building[] = SITE.buildings.map(b => {
+  const raw = rawPoly(b)
   // 編輯模式保存的調整：繞原始質心旋轉後平移
   const e = LOADED_EDITS[b.id]
   const c0 = centroid(raw)
@@ -207,7 +219,7 @@ export const FOREST: Vec2[][] = SITE.forest.map(f => f.map(v))
 export const BOUNDS = SITE.bounds
 export const ORIGIN = SITE.origin
 /** 原始（未調整）建築輪廓，供編輯器匯出差異 */
-export const ORIGINAL_POLYS: Record<string, Vec2[]> = Object.fromEntries(SITE.buildings.map(b => [b.id, b.poly.map(v)]))
+export const ORIGINAL_POLYS: Record<string, Vec2[]> = Object.fromEntries(SITE.buildings.map(b => [b.id, rawPoly(b)]))
 
 export const TUNNEL = PATHS.find(p => p.kind === 'tunnel')!
 /**
@@ -501,9 +513,104 @@ if (SPLIT_LINE.length) {
   AREAS.push({ id: 'tx-upper', kind: 'plaza', pts: [...up, ...upBack.reverse()] })
 }
 
+// ─── 宿舍山坡（使用者 2026-10-09「宿舍往後走那片山沒做好」；DJI_0043_000–012 空拍）──────
+// 紅磚坡道南緣外即是陡峭林坡：坡腳灰色矮牆＋綠籬，往南數公尺內陡升約 10 m 到坡頂平台；
+// 女一舍 D2、男二舍 D3 與玻璃頂走廊蓋在平台上。坡腳過坡道終點後沿八方廣場南緣到扇形廣場東端，
+// 平台東端在施工中的 B 西側以擋土牆切坡收邊（照片左下鷹架所在的凹地維持廣場高程）。
+// 平台不開放步行（實景由宿舍樓梯／電梯塔上下），避免玩家一步登上 10 m 高的平台。
+/** 坡腳離紅磚南緣的距離（矮牆＋綠籬） */
+export const BANK_TOE_GAP = 1.4
+/** 東端切坡（B 西牆前擋土牆）的 x 範圍 */
+export const BANK_CUT_X0 = -74.8
+export const BANK_CUT_X1 = -72.6
+/** 擋土牆南端（再往南切坡逐漸放緩） */
+export const BANK_CUT_Z = 34
+export const BANK_TOE: Vec2[] = []
+if (SPLIT_LINE.length) {
+  for (let s = 0; s < SPLIT_LEN; s += 2) BANK_TOE.push(splitPoint(s, lowerSouth(s) - BANK_TOE_GAP))
+  BANK_TOE.push(splitPoint(SPLIT_LEN, lowerSouth(SPLIT_LEN) - BANK_TOE_GAP))
+  // 八方廣場南緣（扇形廣場東端花台前止）
+  BANK_TOE.push({ x: -97.1, z: 2.0 }, { x: -84.4, z: 1.9 }, { x: -76.2, z: 1.4 })
+}
+const BANK_SEG = BANK_TOE.slice(1).map((b, i) => {
+  const a = BANK_TOE[i]
+  const len = Math.hypot(b.x - a.x, b.z - a.z) || 1
+  return { a, dx: (b.x - a.x) / len, dz: (b.z - a.z) / len, len }
+})
+const BANK_ACC: number[] = []
+BANK_SEG.reduce((t, g) => (BANK_ACC.push(t), t + g.len), 0)
+export const BANK_LEN = BANK_SEG.reduce((t, g) => t + g.len, 0)
+/** 坡頂平台高程（海拔，沿坡腳弧長）：約高出紅磚坡道 10 m，男二舍一帶再高約 1 m */
+const BANK_TOP: [number, number][] = [
+  [0, 22],
+  [10, 25],
+  [25, 27.5],
+  [45, 28.6],
+  [62, 30.6],
+  [78, 32.4],
+  [95, 33],
+  [200, 33],
+]
+/** 坡面水平寬度：電梯塔一帶最陡（擋土牆＋植栽），往兩端放緩 */
+const BANK_WIDTH: [number, number][] = [
+  [0, 6.5],
+  [30, 7],
+  [42, 5.5],
+  [58, 5.5],
+  [72, 7.5],
+  [200, 8],
+]
+const BANK_BOX = { x0: -195, x1: -60, z0: -15, z1: 125 }
+/** 點相對坡腳：t 沿坡腳弧長、d 往坡內（南側）距離（負值＝坡道側）、u0 起點前的距離（負值） */
+export function bankProject(x: number, z: number): { t: number; d: number; u0: number } {
+  let best = { t: 0, d: -Infinity, u0: 0 }
+  let bd = Infinity
+  for (let i = 0; i < BANK_SEG.length; i++) {
+    const g = BANK_SEG[i]
+    const rx = x - g.a.x
+    const rz = z - g.a.z
+    const u = rx * g.dx + rz * g.dz
+    const tc = Math.max(0, Math.min(g.len, u))
+    const dist = Math.hypot(rx - g.dx * tc, rz - g.dz * tc)
+    if (dist < bd) {
+      bd = dist
+      const o = rx * g.dz - rz * g.dx // 正值＝北（坡道側）
+      best = { t: BANK_ACC[i] + tc, d: o <= 0 ? dist : -dist, u0: i === 0 ? Math.min(0, u) : 0 }
+    }
+  }
+  return best
+}
+/** 坡頂平台高程（不含坡面漸變） */
+export function bankTop(t: number): number {
+  return profileAt(BANK_TOP, t)
+}
+/** 坡面權重 0（坡腳以外）→ 1（平台） */
+export function bankWeight(x: number, z: number): number {
+  if (!BANK_SEG.length || x < BANK_BOX.x0 || x > BANK_BOX.x1 || z < BANK_BOX.z0 || z > BANK_BOX.z1) return 0
+  const { t, d, u0 } = bankProject(x, z)
+  if (d <= 0) return 0
+  let w = smoothstep(0, profileAt(BANK_WIDTH, t), d) * (1 - smoothstep(45, 80, d))
+  // 東端：男二舍以北為 B 西牆前的垂直擋土牆；男二舍以南改為往東下降的自然坡（不在廣電大樓西側形成高牆）
+  w *= 1 - smoothstep(BANK_CUT_X0 - Math.max(0, z - BANK_CUT_Z) * 1.2, BANK_CUT_X1, x)
+  if (u0 < 0) w *= smoothstep(-6, 0, u0)
+  return w
+}
+function bankHeight(x: number, z: number, h: number): number {
+  const w = bankWeight(x, z)
+  if (w <= 0) return h
+  const P = bankTop(bankProject(x, z).t)
+  return P > h ? h + (P - h) * w : h
+}
+for (const a of AREAS) {
+  // 坡頂宿舍空地：著色與樹木避讓仍用，但不可步行
+  if (a.id === 'apron-D1' || a.id === 'apron-D2' || a.id === 'apron-D3') a.noWalk = true
+  // B 空地西緣退到切坡擋土牆外，凹地留在廣場高程
+  if (a.id === 'apron-B') a.pts = a.pts.map(p => (p.x < BANK_CUT_X1 + 0.1 ? { x: BANK_CUT_X1 + 0.1, z: p.z } : p))
+}
+
 /** 步行地面高程（公尺，海拔） */
 export function groundHeight(x: number, z: number): number {
-  const h = splitHeight(x, z, rawHeight(x, z))
+  const h = bankHeight(x, z, splitHeight(x, z, rawHeight(x, z)))
   if (!SPORTS || !SPORTS_BOX) return h
   if (x < SPORTS_BOX.x0 - FLAT_MARGIN || x > SPORTS_BOX.x1 + FLAT_MARGIN || z < SPORTS_BOX.z0 - FLAT_MARGIN || z > SPORTS_BOX.z1 + FLAT_MARGIN) return h
   const d = polyDist(x, z, SPORTS.pts)
