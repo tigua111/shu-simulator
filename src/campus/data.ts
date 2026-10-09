@@ -88,9 +88,17 @@ export function centroid(pts: Vec2[]): Vec2 {
  * （另以 obj:D2-lift 建模、立於下層紅磚高程），自宿舍量體移除，宿舍本體留在坡頂平台。
  */
 const D2_LIFT = { x: -133.8, z: 20.2 }
+/**
+ * 隧道口谷道加寬（使用者 2026-10-10「進入山洞口的路太窄，把宿舍往旁邊移動一點」）：
+ * 翠谷餐廳 D1、女一舍 D2（含其電梯塔、綠色頂棚鋼梯、坡頂空地）沿分界線法向往南東整體平移 7.5 m（第二次放寬：隧道口段紅磚由約 8 m 再加寬到約 10.5 m）。
+ */
+export const DORM_SHIFT: Vec2 = { x: 0.573 * 7.5, z: 0.821 * 7.5 }
+const DORM_IDS = new Set(['D1', 'D2', 'apron-D1', 'apron-D2'])
+export const shiftDorm = (p: Vec2): Vec2 => ({ x: p.x + DORM_SHIFT.x, z: p.z + DORM_SHIFT.z })
 function rawPoly(b: (typeof SITE.buildings)[number]): Vec2[] {
-  const raw = b.poly.map(v)
-  if (b.id === 'D2') return raw.filter(p => Math.hypot(p.x - D2_LIFT.x, p.z - D2_LIFT.z) > 3)
+  let raw = b.poly.map(v)
+  if (b.id === 'D2') raw = raw.filter(p => Math.hypot(p.x - D2_LIFT.x, p.z - D2_LIFT.z) > 3)
+  if (DORM_IDS.has(b.id)) raw = raw.map(shiftDorm)
   return raw
 }
 export const BUILDINGS: Building[] = SITE.buildings.map(b => {
@@ -107,7 +115,7 @@ export const BUILDINGS: Building[] = SITE.buildings.map(b => {
     h: ap?.h ?? b.h,
     roof: ap?.roof ?? 'flat',
     pts,
-    ground: b.ground ? b.ground.map(g => g.map(v).map(tf)) : [pts],
+    ground: b.ground ? b.ground.map(g => g.map(v).map(p => (DORM_IDS.has(b.id) ? shiftDorm(p) : p)).map(tf)) : [pts],
     c: centroid(pts),
     box: polyBox(pts),
   }
@@ -214,7 +222,9 @@ export const NEIGHBORS: Neighbor[] = [
   return { ...n, pts, box: polyBox(pts) }
 })
 export const PATHS: PathLine[] = SITE.paths.map(p => ({ id: p.id, kind: p.kind, w: p.w, pts: p.pts.map(v) }))
-export const AREAS: Area[] = SITE.areas.map(a => ({ id: a.id, kind: a.kind, pts: a.poly.map(v) }))
+export const AREAS: Area[] = SITE.areas.map(a => ({ id: a.id, kind: a.kind, pts: DORM_IDS.has(a.id) ? a.poly.map(v).map(shiftDorm) : a.poly.map(v) }))
+/** OSM 世新大學校地範圍（relation 4054406，多塊：主谷地、前校門 J/W、管院 M/OM） */
+export const CAMPUS: Vec2[][] = (SITE.campus ?? []).map(c => c.map(v))
 export const FOREST: Vec2[][] = SITE.forest.map(f => f.map(v))
 export const BOUNDS = SITE.bounds
 export const ORIGIN = SITE.origin
@@ -431,13 +441,16 @@ function lerpTable(tb: [number, number][], s: number): number {
  * 中段約 7.5 m、女一舍電梯塔處讓出塔位約 6 m，往言論廣場端呈扇形放寬。
  */
 const LOWER_SOUTH: [number, number][] = [
-  [0, -4.6],
-  [4, -5.6],
-  [30, -5.0],
-  [40, -3.3],
-  [52, -3.2],
-  [64, -7.5],
-  [SPLIT_LEN, -10],
+  // 2026-10-10 加寬：宿舍南移 5 m 後，隧道口段由 4.6–5.6 m 放寬到 6.5–8 m、電梯塔處（塔北面 o≈-8.3）由 3.3 m 放寬到 8.3 m
+  // 2026-10-10 第二次加寬（宿舍南移 7.5 m）：隧道口段 10.5 m、電梯塔北面 o≈-10.8
+  [0, -8.0],
+  [4, -10.5],
+  [24, -10.5],
+  [30, -11.7], // 女一舍綠色鋼梯梯腳（s≈29、o≈-13）落在紅磚邊
+  [40, -10.9],
+  [52, -10.8],
+  [64, -10.5],
+  [SPLIT_LEN, -10.5],
 ]
 export function lowerSouth(s: number): number {
   return lerpTable(LOWER_SOUTH, s)

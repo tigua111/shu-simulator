@@ -4,7 +4,7 @@ import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { START } from './campus/data'
 import { LANDMARKS, type Landmark } from './campus/landmarks'
 import { Explorer, type Mode } from './campus/explorer'
-import { isWalkable } from './campus/geometry'
+import { insideSolid, isWalkable, onOpenGround, onPaved } from './campus/geometry'
 import { CampusWorld } from './campus/world'
 import { BuildingEditor } from './campus/editor'
 import { LOADED_EDITS, sanitize } from './campus/edits'
@@ -247,7 +247,7 @@ function boot(): void {
   requestAnimationFrame(frame)
 
   // 測試用唯讀掛鉤
-  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor }
+  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor, renderer, THREE, geo: { onPaved, onOpenGround, insideSolid, isWalkable } }
   document.body.classList.add('is-ready')
 }
 

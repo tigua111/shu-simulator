@@ -21,7 +21,7 @@ import {
   centroid,
   groundHeight,
   splitDelta,
-  splitPoint, lowerSouth, upperNorth, UPPER_START, LOWER_NORTH_OPEN,
+  splitPoint, lowerSouth, upperNorth, UPPER_START, LOWER_NORTH_OPEN, CAMPUS,
   BANK_TOE, BANK_LEN, BANK_CUT_X1, BANK_CUT_Z, bankProject, bankTop, bankWeight,
   SPLIT_EDGE,
   SPLIT_LEN,
@@ -30,14 +30,13 @@ import {
   type Building,
   type BuildingStyle,
   type PathKind,
-  type Vec2,
-} from './data'
+  type Vec2, shiftDorm } from './data'
 import { LANDMARKS, type Landmark } from './landmarks'
 import { CANOPY } from './canopy'
 import { LOADED_EDITS, transformPoint, type Edit } from './edits'
 import { MovableRegistry, bindObstacles, type Movable } from './movables'
 import { PLAZA_SURVEY } from './plazaSurvey'
-import { distToPolyline, insideSolid, isWalkable, onPaved, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
+import { distToPolyline, insideSolid, isWalkable, onOpenGround, onPaved, pointInPolygon, resample, routeLength, samplePath, setHillField, type Obstacle } from './geometry'
 import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, fieldTexture, signTexture, solarTexture, stoneTexture } from './textures'
 
 /** 可重現的亂數 */
@@ -288,7 +287,7 @@ function facadeMat(style: BuildingStyle, floorH: number, sink: number): THREE.Me
 /** 多邊形中面向 target 的最長邊 */
 /** 橘褐色框＋藍綠玻璃的電梯塔（通識大樓前、女一舍前；街景） */
 /** 女一舍面向紅磚坡道的電梯塔（坡腳）與沿女一舍北面往隧道口下降的綠色頂棚鋼梯 */
-const D2_LIFT_AT = { x: -133.8, z: 20.2 }
+const D2_LIFT_AT = shiftDorm({ x: -133.8, z: 20.2 }) // 2026-10-10 隨女一舍南移 7.5 m
 const D2_STAIR_DIR = { x: -0.821, z: 0.573 }
 const D2_STAIR_A = { x: D2_LIFT_AT.x + D2_STAIR_DIR.x * 2.6, z: D2_LIFT_AT.z + D2_STAIR_DIR.z * 2.6 }
 const D2_STAIR_B = { x: D2_LIFT_AT.x + D2_STAIR_DIR.x * 19.6, z: D2_LIFT_AT.z + D2_STAIR_DIR.z * 19.6 }
@@ -704,6 +703,8 @@ export class CampusWorld {
     this.setShadowFocus(START.pos.x, START.pos.z, false)
 
     this.addGround()
+    // 開放地面可步行判定需要視覺山坡高度（geometry.onOpenGround）
+    setHillField(hillAt)
     this.addPaths()
     this.addSportsGround()
     for (const b of BUILDINGS) {
@@ -932,6 +933,7 @@ export class CampusWorld {
     const forest = new THREE.Color(0x2f4d2a)
     const understory = new THREE.Color(0x3c5a31)
     const urban = new THREE.Color(0x9e9c98)
+    const campusGreen = new THREE.Color(0x56723f)
     const areaColor: Record<AreaKind, THREE.Color> = {
       plaza: new THREE.Color(0xcf9f8a),
       sports: new THREE.Color(0xb5473a),
@@ -963,7 +965,8 @@ export class CampusWorld {
         set = true
       } else {
         for (const kind of areaOrder) {
-          const a = AREAS.find(ar => ar.kind === kind && pointInPolygon(p, ar.pts))
+          // 宿舍坡頂空地（noWalk）不再畫成米色空地：交給下方校內綠地／林下配色
+          const a = AREAS.find(ar => ar.kind === kind && !ar.noWalk && pointInPolygon(p, ar.pts))
           if (a) {
             c.copy(areaColor[a.kind])
             set = true
@@ -973,7 +976,9 @@ export class CampusWorld {
       }
       if (!set) {
         const inForest = FOREST.some(fp => pointInPolygon(p, fp))
-        if (inForest) c.copy(understory).offsetHSL(jitter * 0.4, 0, jitter)
+        if (inForest || bw >= 0.97) c.copy(understory).offsetHSL(jitter * 0.4, 0, jitter)
+        // 2026-10-10 校地（OSM relation 4054406）內未鋪面的空地＝草地／植栽（原本灰色像沒做完的空地）
+        else if (CAMPUS.some(cp => pointInPolygon(p, cp))) c.copy(campusGreen).offsetHSL(jitter * 0.4, 0, jitter)
         else c.copy(urban).offsetHSL(0, 0, jitter * 0.6)
       }
       colors[k * 3] = c.r
@@ -2630,7 +2635,7 @@ export class CampusWorld {
       this.obstacles.push(obs)
     }
     // 隧道出口紅磚坡道南側：女一舍電梯塔以東、玻璃弧廊以北的林帶大樹（DJI_0043 第 24 秒）
-    for (const [s, o, sc] of [[54, -8.6, 1.15], [60, -11, 1.3], [66, -12.8, 1.1]]) {
+    for (const [s, o, sc] of [[54, -12.6, 1.15], [60, -13.4, 1.3], [66, -14.2, 1.1]]) {
       const q = splitPoint(s, o)
       if (insideSolid(q, 1.5) || onPaved(q)) continue
       const obs = { x: q.x, z: q.z, r: 0.6 }
@@ -2667,6 +2672,14 @@ export class CampusWorld {
       }
     }
 
+    // 平地（可步行地面）上的樹：樹幹要擋人，不能直接穿過去
+    for (const t of trees) {
+      if (t.obs || t.palm) continue
+      const p = { x: t.x, z: t.z }
+      if (!onPaved(p) && !onOpenGround(p)) continue
+      t.obs = { x: t.x, z: t.z, r: 0.3 + 0.25 * t.s }
+      this.obstacles.push(t.obs)
+    }
     const normal = trees.filter(t => !t.palm)
     const palms = trees.filter(t => t.palm)
     const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.34, 3, 6), new THREE.MeshLambertMaterial({ color: 0x6b4a33 }), normal.length)
@@ -3977,9 +3990,9 @@ export class CampusWorld {
     pave(UPPER_START, SPLIT_LEN, lowerSouth, () => E - 0.06, 0xa86b5b, 0.1)
     pave(UPPER_START, SPLIT_LEN, () => E + 0.06, upperNorth, 0xa3a19c, 0.11)
     // 女一舍側植栽帶（照片第 31／37 秒：紅磚南緣 → 綠色頂棚鋼梯 → 宿舍之間滿是灌木與地被）
-    pave(4, 48, () => -10.5, t => lowerSouth(t) - 0.12, 0x3b6331, 0.06)
+    pave(4, 48, t => lowerSouth(t) - 3.2, t => lowerSouth(t) - 0.12, 0x3b6331, 0.06)
     // 電梯塔以東至言論廣場端：紅磚南緣與玻璃弧廊之間的林帶地被（第 24 秒）
-    pave(48, 72, () => -16, t => lowerSouth(t) - 0.12, 0x34592c, 0.04)
+    pave(48, 72, t => Math.min(-16, lowerSouth(t) - 4.5), t => lowerSouth(t) - 0.12, 0x34592c, 0.04)
     {
       const rr = rng(4307)
       const geo = new THREE.IcosahedronGeometry(1, 1)
@@ -3991,7 +4004,7 @@ export class CampusWorld {
       let n = 0
       for (let tries = 0; n < N && tries < 2000; tries++) {
         const t = 4 + rr() * 44
-        const o = -10 + rr() * (lowerSouth(t) - 0.9 + 10)
+        const o = lowerSouth(t) - 0.9 - rr() * 2.4
         const p = splitPoint(t, o)
         if (insideSolid(p, 0.6)) continue
         const r0 = 0.45 + rr() * 0.55
@@ -4375,10 +4388,11 @@ export class CampusWorld {
     // 坡頂玻璃頂走廊：電梯塔頂 → 女一舍東北角 → 男二舍西端入口（照片 000–003 中坡頂的白色長廊）
     this.capture('obj:dorm-corridor', '宿舍坡頂玻璃頂走廊', '', 'none', () => {
       const line: Vec2[] = [
-        { x: -131.5, z: 20.9 },
-        { x: -128.3, z: 20.3 },
-        { x: -125.0, z: 23.4 },
-        { x: -120.0, z: 23.9 },
+        // 前四點在女一舍上，隨宿舍南移；末點為男二舍西端入口（未移動）
+        shiftDorm({ x: -131.5, z: 20.9 }),
+        shiftDorm({ x: -128.3, z: 20.3 }),
+        shiftDorm({ x: -125.0, z: 23.4 }),
+        shiftDorm({ x: -120.0, z: 23.9 }),
         { x: -103.0, z: 19.2 },
       ]
       const g = new THREE.Group()

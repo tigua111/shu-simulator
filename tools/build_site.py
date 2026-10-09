@@ -391,6 +391,8 @@ out['areas'] = [dict(id=a['id'], kind=a['kind'], poly=SP(a['poly'])) for a in ar
 out['route'] = SP(ROUTE)
 out['elev'] = [S(p[:2]) + [p[2]] for p in ELEV]
 out['forest'] = [SP(fp) for fp in FOREST]
+# OSM relation 4054406（世新大學）外框，已換算為場景座標（campus_poly.json 由 osm.json 的 relation 成員組成）
+out['campus'] = [[[round(x, 2), round(z, 2)] for x, z in c] for c in json.load(open(f'{GEO}/campus_poly.json'))]
 # 操場跑道：依 OSM 球場長邊方向（約東偏南 8.5°）與航照外緣
 fld = ring(245411855)
 ang = math.atan2(fld[2][1] - fld[1][1], fld[2][0] - fld[1][0])  # 本地座標下長邊方向

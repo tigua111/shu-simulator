@@ -63,6 +63,8 @@ export interface SiteData {
   /** 高程控制點 [x, z, 海拔公尺] */
   elev: [number, number, number][]
   forest: P2[][]
+  /** OSM 世新大學校地範圍（多塊） */
+  campus?: P2[][]
   track: { center: P2; rot: number; len: number; w: number; lane: number }
   stage: { center: P2; r: number }
   backGate: { center: P2; dir: P2 }
