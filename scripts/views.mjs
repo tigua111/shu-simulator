@@ -64,6 +64,11 @@ try {
       ([p, t, fov]) => {
         const { explorer } = window.__campus
         explorer.fly = null
+        // 近距離機位（步行視角）不受俯瞰模式 orbit 的最短／最長距離限制
+        explorer.orbit.minDistance = 0.05
+        explorer.orbit.maxDistance = 5000
+        explorer.orbit.minPolarAngle = 0
+        explorer.orbit.maxPolarAngle = Math.PI
         if (fov) {
           explorer.camera.fov = fov
           explorer.camera.updateProjectionMatrix()
@@ -76,6 +81,24 @@ try {
       [p, t, Number(process.env.FOV) || 0],
     )
     await page.waitForTimeout(1600)
+    if (process.env.PROBE) {
+      // 除錯用：列出畫面中央視線命中的物件（類型、名稱、所屬可編輯物件、命中點）
+      const hit = await page.evaluate(() => {
+        const { explorer, world } = window.__campus
+        const cam = explorer.camera
+        const res = []
+        world.scene.traverse(o => {
+          if (!o.isMesh || !o.visible || !o.geometry) return
+          o.geometry.computeBoundingSphere()
+          const c = o.geometry.boundingSphere.center.clone().applyMatrix4(o.matrixWorld)
+          const d = c.distanceTo(cam.position)
+          const r = o.geometry.boundingSphere.radius * o.matrixWorld.getMaxScaleOnAxis()
+          if (d < r + 0.6 && r < 60) res.push([o.geometry.type, o.name || o.parent?.name || '', +c.x.toFixed(1), +c.y.toFixed(1), +c.z.toFixed(1), +r.toFixed(1)])
+        })
+        return res.slice(0, 20)
+      })
+      console.log('near', name, JSON.stringify(hit))
+    }
     await page.screenshot({ path: `${out}/${name}.png` })
     console.log('shot', name)
   }

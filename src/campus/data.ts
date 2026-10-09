@@ -368,12 +368,15 @@ const LOWER_PROFILE: [number, number][] = [
   [45, 18.2],
   [SPLIT_LEN, 22.3],
 ]
+/** 二樓平台高程（海拔）：使用者 2026-10-09 指正「斜坡上去後會到二樓」 */
+export const DECK_H = 25.9
 const UPPER_PROFILE: [number, number][] = [
   [0, 16],
   [10, 16.6],
   [30, 21.0],
   [45, 22.6],
-  [SPLIT_LEN, 24.0],
+  [60, 24.4],
+  [SPLIT_LEN, DECK_H],
 ]
 function profileAt(pr: [number, number][], s: number): number {
   if (s <= pr[0][0]) return pr[0][1]
@@ -464,7 +467,10 @@ function splitHeight(x: number, z: number, h: number): number {
   let target: number
   let wo: number
   if (o >= SPLIT_EDGE) {
-    target = profileAt(UPPER_PROFILE, s)
+    if (s > SPLIT_LEN) {
+      // 上層坡道終點以外：二樓平台另由 DECK_2F 覆寫，平台前方即一樓廣場（與下層終點同高）
+      target = profileAt(LOWER_PROFILE, SPLIT_LEN)
+    } else target = profileAt(UPPER_PROFILE, s)
     wo = o <= SPLIT_EDGE + 13 ? 1 : 1 - smoothstep(SPLIT_EDGE + 13, SPLIT_EDGE + 22, o)
   } else {
     target = profileAt(LOWER_PROFILE, s)
@@ -511,6 +517,105 @@ if (SPLIT_LINE.length) {
   up.push(splitPoint(SPLIT_LEN, SPLIT_EDGE + 0.05))
   upBack.push(splitPoint(SPLIT_LEN, upperNorth(SPLIT_LEN)))
   AREAS.push({ id: 'tx-upper', kind: 'plaza', pts: [...up, ...upBack.reverse()] })
+}
+
+// ─── 二樓平台（使用者 2026-10-09 藍框 DJI_0037_108＋NLSC 正射 deck_raw.jpg）─────────
+// 行政大樓前灰磚坡道（上層）爬上去是二樓平台：行政大樓東段前 → 橘褐色電梯塔 → 粉紅磚一層小樓（屋頂即平台）
+// → 通識大樓前 → 圓環。平台前緣下方為商店／小樓店面，一樓紅磚言論廣場在其前方；圓環南側扇形階梯下到一樓。
+/** 行政大樓東南面（A0 → 東端 A1）座標系：t 沿牆、off 往東南 */
+const ADM_A0: Vec2 = { x: -138.7, z: 4.1 }
+const ADM_A1: Vec2 = { x: -106.2, z: -18.7 }
+const ADM_LEN = Math.hypot(ADM_A1.x - ADM_A0.x, ADM_A1.z - ADM_A0.z)
+export const ADM_DIR: Vec2 = { x: (ADM_A1.x - ADM_A0.x) / ADM_LEN, z: (ADM_A1.z - ADM_A0.z) / ADM_LEN }
+export function admFace(t: number, off: number): Vec2 {
+  return { x: ADM_A0.x + ADM_DIR.x * t - ADM_DIR.z * off, z: ADM_A0.z + ADM_DIR.z * t + ADM_DIR.x * off }
+}
+/** 圓環：圓心（正射灰色半環雨棚），lx 沿通識大樓東南面、lz 朝東南；r0 平台半徑、r1 扇形階梯外緣 */
+export const ROTUNDA = { x: -84, z: -32, yaw: Math.atan2(0.492, 0.87), r0: 7.2, r1: 13.2 }
+export function rotundaWorld(lx: number, lz: number): Vec2 {
+  const c = Math.cos(ROTUNDA.yaw)
+  const s = Math.sin(ROTUNDA.yaw)
+  return { x: ROTUNDA.x + lx * c + lz * s, z: ROTUNDA.z - lx * s + lz * c }
+}
+export function rotundaLocal(x: number, z: number): { lx: number; lz: number } {
+  const c = Math.cos(ROTUNDA.yaw)
+  const s = Math.sin(ROTUNDA.yaw)
+  const dx = x - ROTUNDA.x
+  const dz = z - ROTUNDA.z
+  return { lx: dx * c - dz * s, lz: dx * s + dz * c }
+}
+/** 電梯塔（紅色角錐屋頂、四層）：塔身一半在平台前緣內，一樓門朝廣場、二樓門朝平台 */
+export const DECK_LIFT = { ...admFace(40.4, 8.05), w: 4 }
+/** 平台前緣（由上層坡道終點往東）：商店街 → 電梯塔 → 粉紅磚小樓 → 圓環西端 */
+export const DECK_FRONT: Vec2[] = SPLIT_LINE.length
+  ? [
+      splitPoint(SPLIT_LEN, SPLIT_EDGE),
+      admFace(38.4, 10.05),
+      admFace(42.4, 10.05),
+      admFace(42.4, 8.6),
+      admFace(50.2, 8.6),
+      admFace(50.2, 0.35),
+      rotundaWorld(-ROTUNDA.r1, 0),
+    ]
+  : []
+/** 圓環東端到通識大樓外牆的擋土牆 */
+export const DECK_EAST: Vec2[] = [rotundaWorld(ROTUNDA.r1, 0), rotundaWorld(ROTUNDA.r1, -7.7)]
+const G_SW: Vec2 = { x: -103.2, z: -28.9 }
+const ADM_TIP: Vec2 = { x: -106.3, z: -18.7 }
+export const DECK_2F: Vec2[] = SPLIT_LINE.length
+  ? [...DECK_FRONT, ...DECK_EAST, G_SW, ADM_TIP, splitPoint(SPLIT_LEN, upperNorth(SPLIT_LEN))]
+  : []
+const DECK_BOX = boxOfPts(DECK_2F)
+function boxOfPts(pts: Vec2[]) {
+  return pts.length
+    ? { x0: Math.min(...pts.map(p => p.x)), x1: Math.max(...pts.map(p => p.x)), z0: Math.min(...pts.map(p => p.z)), z1: Math.max(...pts.map(p => p.z)) }
+    : { x0: 0, x1: -1, z0: 0, z1: -1 }
+}
+function inPolyXZ(x: number, z: number, pts: Vec2[]): boolean {
+  let inside = false
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j]
+    const b = pts[i]
+    if (a.z > z !== b.z > z && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside
+  }
+  return inside
+}
+export function insideDeck(x: number, z: number): boolean {
+  if (x < DECK_BOX.x0 || x > DECK_BOX.x1 || z < DECK_BOX.z0 || z > DECK_BOX.z1) return false
+  return inPolyXZ(x, z, DECK_2F)
+}
+/** 二樓平台／圓環覆寫後的步行高程（b＝一樓地形高程） */
+function deckHeight(x: number, z: number, b: number): number {
+  if (insideDeck(x, z)) return DECK_H
+  const { lx, lz } = rotundaLocal(x, z)
+  if (lz < 0 || Math.abs(lx) > ROTUNDA.r1 || lz > ROTUNDA.r1) return b
+  const r = Math.hypot(lx, lz)
+  if (r <= ROTUNDA.r0) return DECK_H
+  if (r >= ROTUNDA.r1 || b >= DECK_H) return b
+  // 扇形階梯：步行以斜面近似（畫面上為 17 階）
+  return DECK_H + (b - DECK_H) * ((r - ROTUNDA.r0) / (ROTUNDA.r1 - ROTUNDA.r0))
+}
+/** 平台後方：行政大樓東北面與通識大樓西面之間往圖書館的樓梯（自平台高程起，不低於平台） */
+const DECK_REAR: Vec2[] = [ADM_TIP, { x: -117.7, z: -34.6 }, { x: -109.3, z: -39.6 }, G_SW]
+function deckRearHeight(x: number, z: number, h: number): number {
+  if (h >= DECK_H || x < -119 || x > -102 || z < -41 || z > -17) return h
+  if (!inPolyXZ(x, z, DECK_REAR)) return h
+  const dx = G_SW.x - ADM_TIP.x
+  const dz = G_SW.z - ADM_TIP.z
+  const L2 = dx * dx + dz * dz
+  const u = Math.max(0, Math.min(1, ((x - ADM_TIP.x) * dx + (z - ADM_TIP.z) * dz) / L2))
+  const d = Math.hypot(x - ADM_TIP.x - dx * u, z - ADM_TIP.z - dz * u)
+  const w = 1 - smoothstep(8, 13, d)
+  return h + (DECK_H - h) * w
+}
+if (DECK_2F.length) {
+  AREAS.push({ id: 'deck-2f', kind: 'plaza', pts: DECK_2F })
+  const fan: Vec2[] = []
+  for (let i = 0; i <= 24; i++) {
+    const a = (Math.PI * i) / 24
+    fan.push(rotundaWorld(-ROTUNDA.r1 * Math.cos(a), ROTUNDA.r1 * Math.sin(a)))
+  }
+  AREAS.push({ id: 'rotunda-fan', kind: 'plaza', pts: fan })
 }
 
 // ─── 宿舍山坡（使用者 2026-10-09「宿舍往後走那片山沒做好」；DJI_0043_000–012 空拍）──────
@@ -608,15 +713,19 @@ for (const a of AREAS) {
   if (a.id === 'apron-B') a.pts = a.pts.map(p => (p.x < BANK_CUT_X1 + 0.1 ? { x: BANK_CUT_X1 + 0.1, z: p.z } : p))
 }
 
-/** 步行地面高程（公尺，海拔） */
-export function groundHeight(x: number, z: number): number {
-  const h = bankHeight(x, z, splitHeight(x, z, rawHeight(x, z)))
+/** 一樓地形高程（不含二樓平台與圓環階梯；地形網格用） */
+export function terrainBaseHeight(x: number, z: number): number {
+  const h = deckRearHeight(x, z, bankHeight(x, z, splitHeight(x, z, rawHeight(x, z))))
   if (!SPORTS || !SPORTS_BOX) return h
   if (x < SPORTS_BOX.x0 - FLAT_MARGIN || x > SPORTS_BOX.x1 + FLAT_MARGIN || z < SPORTS_BOX.z0 - FLAT_MARGIN || z > SPORTS_BOX.z1 + FLAT_MARGIN) return h
   const d = polyDist(x, z, SPORTS.pts)
   if (d >= FLAT_MARGIN) return h
   const t = smoothstep(0, FLAT_MARGIN, d)
   return SPORTS_Y * (1 - t) + h * t
+}
+/** 步行地面高程（公尺，海拔）：一樓地形＋二樓平台／圓環階梯 */
+export function groundHeight(x: number, z: number): number {
+  return deckHeight(x, z, terrainBaseHeight(x, z))
 }
 
 export function smoothstep(edge0: number, edge1: number, x: number): number {
