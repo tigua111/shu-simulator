@@ -33,6 +33,6 @@ export const APPEARANCE: Record<string, Appearance> = {
   A: { style: 'auditorium', roof: 'solar', note: '0037：白牆暗紅色壁柱、黃色基座，頂層退縮並鋪太陽能板，正面有「大禮堂」字樣與直幅布條' },
   V: { style: 'goldBox', h: 12, roof: 'solarGreen', note: '0037／0045：金褐色外牆的長形攝影棚，屋頂太陽能板配綠色走道，玻璃底層' },
   C: { style: 'whiteArch', roof: 'flat', note: '0045：白色 7 層、頂層與一樓拱窗，面向操場掛紅色直幅布條' },
-  M: { style: 'glassGreen', roof: 'metal', note: '0045：綠色玻璃帷幕、白色柱廊底層、圓弧玻璃端牆，前有廣場（已以學校網站照片「世新大學管理學院」招牌確認）' },
-  OM: { style: 'omTower', roof: 'flat', note: '0045：管院東側的米灰色塔樓，深灰框線，西面掛巨幅藍色海報' },
+  M: { style: 'glassGreen', roof: 'metal', note: '0045＋地面照片 second_000–050：薄荷綠玻璃帷幕、白色樓板帶與豎框；北面一樓為兩層高石材圓柱柱廊（上方懸挑），西端綠色玻璃圓柱塔，前有不鏽鋼球噴水池廣場' },
+  OM: { style: 'omTower', roof: 'flat', note: '米灰色塔樓、深灰框線；地面照片確認巨幅藍綠「全媒體」海報掛在東面（噴水池廣場側），其下為米色低樓（紅字管院招牌）' },
 }

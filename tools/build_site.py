@@ -92,6 +92,17 @@ buildings.append(dict(id='SE', num='', name='舍我樓 入口棟', code='', osm=
 # 主塔西面基座的半圓形一層裙樓（DJI_0038_053：弧形窗帶、冷氣機、頂部植栽），圓心在主塔西牆中段
 _arc = [(3 + 7.5 * math.cos(math.radians(a)), -55 + 7.5 * math.sin(math.radians(a))) for a in range(90, 271, 15)]
 buildings.append(dict(id='SW', num='', name='舍我樓 西側弧形裙樓', code='', osm=245404436, floors=1, style='brick', poly=LP(_arc)))
+# 管理學院 M（2026-10-09 使用者地面照片 second_000–050）：北面（噴水池廣場側）一樓為約兩層高的白色大圓柱柱廊，
+# 上方整棟懸挑 → 地面層量體自北面外牆線內縮 3.5 m，柱廊下可步行
+_m = next(b for b in buildings if b['id'] == 'M')
+_mp = Polygon([(x - OX, OY - y) for x, y in _m['poly']]).buffer(0)
+_f0, _u, _n = (200.1, 216.9), (-0.9816, 0.1911), (0.1911, 0.9816)  # 北面外牆線起點、沿牆方向、向內法線
+_strip = Polygon([(_f0[0] + _u[0] * s_ + _n[0] * o_, _f0[1] + _u[1] * s_ + _n[1] * o_) for s_, o_ in ((-4, -4), (64, -4), (64, 3.5), (-4, 3.5))])
+_g = _mp.difference(_strip)
+if _g.geom_type != 'Polygon':
+    _g = max(_g.geoms, key=lambda q: q.area)
+_m['ground'] = [LP([(round(x, 2), round(z, 2)) for x, z in list(_g.exterior.coords)[:-1]])]
+_m['groundH'] = 7.6
 campus_ids = {b['osm'] for b in buildings}
 campus_union = unary_union([Polygon(b['poly']).buffer(0) for b in buildings])
 
@@ -191,6 +202,10 @@ paths.append(dict(id='she-yard-w-steps', kind='steps', w=2.2, osm=0, pts=LP([(-1
 paths.append(dict(id='court-lane', kind='concrete', w=7, osm=0, pts=LP([(98, -13), (60, -12.8), (40, -12.5), (24, -14.5)])))
 # 言論廣場雕像後方步道：白色雨棚平台西緣 → 雕像北側林緣 → 戶外劇場南緣 → 通識東端階梯（13757/13762）
 paths.append(dict(id='statue-back', kind='footway', w=2.6, osm=0, pts=LP([(-24, -48), (-34, -52), (-44, -51), (-53, -53), (-62, -54), (-66, -52)])))
+# 管院東側小巷（正射斜向巷道）、夾牆坡道與噴水池廣場北緣步道（second_000–021）
+paths.append(dict(id='m-lane', kind='concrete', w=4.2, osm=0, pts=LP([(181, 181), (194, 200), (203, 214), (204.6, 228), (212, 240), (220, 252)])))
+paths.append(dict(id='m-ramp', kind='concrete', w=2.6, osm=0, pts=LP([(201.6, 216.4), (190.2, 200.6)])))
+paths.append(dict(id='m-walk', kind='concrete', w=2.8, osm=0, pts=LP([(190.2, 200.6), (176, 197.6), (162, 197.8)])))
 paths.append(dict(id='she-court-steps', kind='steps', w=4.5, osm=0, pts=LP([(21.2, -18.5), (21.2, -30.5)])))
 # ─── 補充周邊建物：國土測繪中心通用電子地圖建物塊（OSM 缺漏的街區） ─────────
 # 空拍 0042/0045 顯示校區北、東、南側為密集 3–8 層民宅；OSM 只畫了一部分。
@@ -274,6 +289,7 @@ area('theatre', 'plaza', ring(245408151))  # 戶外劇場
 area('she-court', 'plaza', LP([(12.5, -30.5), (12.5, -38), (16.5, -38), (16.5, -47.5), (36, -47.5), (37, -31)]))
 # 言論廣場東北角～舍我樓 R 北側：白色張力膜雨棚＋木平台（使用者照片 13757/13762/13765），原為樹林
 area('she-terrace', 'plaza', LP([(-46, -52), (-36, -52.5), (-13, -50), (-13, -40.5), (-31, -40.5), (-37, -33), (-41, -39), (-44, -45)]))
+area('m-plaza', 'plaza', LP([(149.5, 228.8), (202, 218.2), (196.5, 210.5), (188.6, 200.2), (161, 199), (160, 212.6), (150, 215.4)]))  # 管院噴水池廣場（不長樹）
 area('cafe-deck', 'plaza', LP([(44, -8.4), (78, -8.4), (78, 1.5), (44, 3.5)]))  # 0042_128 林緣咖啡座（不長樹）
 area('she-yard', 'plaza', LP([(-13, -35), (2.5, -35), (2.5, -44), (-13, -44)]))  # 0038_053：西緣為棕櫚與樹林，再往西是下坡小徑
 area('she-podium', 'plaza', LP([(-8, -44), (2.5, -44), (2.5, -47.6), (-1, -49.5), (-8, -47.5)]))  # 圓柱與弧形裙樓之間的灰綠磁磚平台  # 0042_030：南翼拱廊北面前的窄中庭，再往北即樹林

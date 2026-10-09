@@ -169,30 +169,29 @@ export function facadeTexture(style: BuildingStyle): THREE.CanvasTexture {
       }
       break
     case 'glassGreen': {
-      const grad = g.createLinearGradient(0, 0, 128, 128)
-      grad.addColorStop(0, '#4f8f7f')
-      grad.addColorStop(0.5, '#7fb8a6')
-      grad.addColorStop(1, '#3f7a6c')
+      // 管院（second_024–035）：薄荷綠／藍綠反光玻璃帷幕、淺灰豎框、白色樓板帶
+      const grad = g.createLinearGradient(0, 0, 0, 128)
+      grad.addColorStop(0, '#a3e6d6')
+      grad.addColorStop(0.55, '#62c2b0')
+      grad.addColorStop(1, '#3f9b8c')
       g.fillStyle = grad
       g.fillRect(0, 0, 128, 128)
-      g.strokeStyle = '#d7e4e0'
-      g.lineWidth = 2
-      for (let x = 0; x <= 128; x += 21) {
-        g.beginPath()
-        g.moveTo(x, 0)
-        g.lineTo(x, 128)
-        g.stroke()
-      }
-      g.lineWidth = 3
+      g.fillStyle = 'rgba(255,255,255,0.2)'
       g.beginPath()
-      g.moveTo(0, 2)
-      g.lineTo(128, 2)
-      g.stroke()
-      g.lineWidth = 1
-      g.beginPath()
-      g.moveTo(0, 64)
-      g.lineTo(128, 64)
-      g.stroke()
+      g.moveTo(0, 92)
+      g.lineTo(62, 0)
+      g.lineTo(86, 0)
+      g.lineTo(26, 128)
+      g.lineTo(0, 128)
+      g.closePath()
+      g.fill()
+      g.fillStyle = '#d3dfdb'
+      for (let x = 0; x < 128; x += 32) g.fillRect(x, 0, 3, 128)
+      g.fillRect(0, 72, 128, 2)
+      g.fillStyle = '#f0f3f1'
+      g.fillRect(0, 0, 128, 13)
+      g.fillStyle = 'rgba(30,64,58,0.4)'
+      g.fillRect(0, 13, 128, 2)
       break
     }
     case 'omTower':

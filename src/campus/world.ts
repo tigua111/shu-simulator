@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { TessellateModifier } from 'three/examples/jsm/modifiers/TessellateModifier.js'
 import {
   AREAS,
   BACK_GATE,
@@ -31,7 +32,7 @@ import {
 } from './data'
 import { LANDMARKS, type Landmark } from './landmarks'
 import { CANOPY } from './canopy'
-import { LOADED_EDITS, type Edit } from './edits'
+import { LOADED_EDITS, transformPoint, type Edit } from './edits'
 import { MovableRegistry, bindObstacles, type Movable } from './movables'
 import { PLAZA_SURVEY } from './plazaSurvey'
 import { distToPolyline, insideSolid, isWalkable, onPaved, pointInPolygon, resample, routeLength, samplePath, type Obstacle } from './geometry'
@@ -423,6 +424,157 @@ function inset(pts: Vec2[], k: number): Vec2[] {
   return pts.map(p => ({ x: c.x + (p.x - c.x) * k, z: c.z + (p.z - c.z) * k }))
 }
 
+/** 全媒體大樓東面巨幅海報（程序化重繪：藍綠漸層、電路紋、標題、QR 樣式方塊；非照片貼圖） */
+function omBannerTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 384
+  c.height = 960
+  const x = c.getContext('2d')!
+  const gr = x.createLinearGradient(0, 0, 0, 960)
+  gr.addColorStop(0, '#3dbccb')
+  gr.addColorStop(0.45, '#1c6c90')
+  gr.addColorStop(1, '#0e2c55')
+  x.fillStyle = gr
+  x.fillRect(0, 0, 384, 960)
+  let seed = 11
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  x.lineWidth = 3
+  for (let i = 0; i < 30; i++) {
+    let px = rnd() * 384
+    let py = 260 + rnd() * 700
+    x.strokeStyle = 'rgba(110,232,255,0.55)'
+    x.beginPath()
+    x.moveTo(px, py)
+    for (let k = 0; k < 4; k++) {
+      if (k % 2 === 0) py -= 40 + rnd() * 120
+      else px += (rnd() - 0.5) * 110
+      x.lineTo(px, py)
+    }
+    x.stroke()
+    x.fillStyle = 'rgba(170,246,255,0.95)'
+    x.beginPath()
+    x.arc(px, py, 5, 0, Math.PI * 2)
+    x.fill()
+  }
+  const F = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif'
+  x.fillStyle = '#ffffff'
+  x.textAlign = 'center'
+  x.font = `700 28px ${F}`
+  x.fillText('世新大學', 192, 66)
+  x.font = `900 96px ${F}`
+  x.fillText('全媒體', 192, 178)
+  x.font = `700 36px ${F}`
+  x.fillText('開創世新新世代', 192, 234)
+  x.font = `600 24px ${F}`
+  x.fillText('O M N I   M E D I A', 192, 276)
+  const q = 150
+  const qx = 192 - q / 2
+  const qy = 318
+  x.fillStyle = '#ffffff'
+  x.fillRect(qx - 12, qy - 12, q + 24, q + 24)
+  const n = 21
+  const cell = q / n
+  x.fillStyle = '#111111'
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (rnd() < 0.5) x.fillRect(qx + i * cell, qy + j * cell, cell, cell)
+  for (const [fx, fy] of [
+    [0, 0],
+    [n - 7, 0],
+    [0, n - 7],
+  ]) {
+    x.fillStyle = '#111111'
+    x.fillRect(qx + fx * cell, qy + fy * cell, 7 * cell, 7 * cell)
+    x.fillStyle = '#ffffff'
+    x.fillRect(qx + (fx + 1) * cell, qy + (fy + 1) * cell, 5 * cell, 5 * cell)
+    x.fillStyle = '#111111'
+    x.fillRect(qx + (fx + 2) * cell, qy + (fy + 2) * cell, 3 * cell, 3 * cell)
+  }
+  x.fillStyle = '#ffffff'
+  x.font = `700 30px ${F}`
+  x.fillText('CNN 在台第一所夥伴大學', 192, 560)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+/** 淺灰拋光磁磚（約 0.6 m 一塊；uv 以 1.2 m 為一單位） */
+function paleTileTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const x = c.getContext('2d')!
+  const tones = ['#dadbd6', '#d3d4cf', '#dfe0db', '#d6d7d2']
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+    x.fillStyle = tones[i * 2 + j]
+    x.fillRect(i * 64, j * 64, 64, 64)
+  }
+  x.strokeStyle = '#b4b5b0'
+  x.lineWidth = 2
+  x.strokeRect(1, 1, 126, 126)
+  x.beginPath()
+  x.moveTo(64, 0)
+  x.lineTo(64, 128)
+  x.moveTo(0, 64)
+  x.lineTo(128, 64)
+  x.stroke()
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  return t
+}
+
+/** 噴水池放射狀磁磚圓盤（同心圓＋放射縫；uv 為圓盤平面座標） */
+function radialPavingTexture(): THREE.CanvasTexture {
+  const S = 1024
+  const c = document.createElement('canvas')
+  c.width = c.height = S
+  const x = c.getContext('2d')!
+  x.fillStyle = '#dcdcd7'
+  x.fillRect(0, 0, S, S)
+  const R = S / 2
+  x.strokeStyle = '#a9aaa5'
+  x.lineWidth = 2
+  const rings = 18
+  for (let k = 1; k <= rings; k++) {
+    const r = (R * k) / rings
+    x.beginPath()
+    x.arc(R, R, r, 0, Math.PI * 2)
+    x.stroke()
+    const r0 = (R * (k - 1)) / rings
+    const seg = Math.max(6, Math.round((2 * Math.PI * r) / 34))
+    x.beginPath()
+    for (let i = 0; i < seg; i++) {
+      const a = (Math.PI * 2 * (i + (k % 2) * 0.5)) / seg
+      x.moveTo(R + r0 * Math.cos(a), R + r0 * Math.sin(a))
+      x.lineTo(R + r * Math.cos(a), R + r * Math.sin(a))
+    }
+    x.stroke()
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.anisotropy = 4
+  return t
+}
+
+/** 洗石子牆面（灰褐細碎石） */
+function pebbleTexture(rx: number, ry: number): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const x = c.getContext('2d')!
+  x.fillStyle = '#8e877c'
+  x.fillRect(0, 0, 128, 128)
+  let seed = 5
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  for (let i = 0; i < 900; i++) {
+    const v = rnd()
+    x.fillStyle = v < 0.4 ? '#6e685f' : v < 0.75 ? '#a8a194' : '#c1bbae'
+    x.fillRect(rnd() * 128, rnd() * 128, 2, 2)
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.repeat.set(rx, ry)
+  return t
+}
+
 function baseOf(pts: Vec2[]): number {
   return Math.min(...pts.map(p => groundHeight(p.x, p.z)))
 }
@@ -502,6 +654,7 @@ export class CampusWorld {
     this.addCourtSurroundings()
     this.addYanlun()
     this.addTunnelExitTerrace()
+    this.addMgmtPlaza()
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => this.addBackGate())
     this.addFences()
     this.addStreetDressing()
@@ -1119,34 +1272,474 @@ export class CampusWorld {
         break
       case 'M':
         this.placeOnFace(g, b, { x: b.c.x, z: b.c.z + 60 }, this.signPlane(signTexture('世新大學管理學院', { color: '#b3202f', bg: '#ffffff' }), 10, 1.4), base + 3)
+        this.addMgmtFacade(g, b, base, top)
         break
-      case 'OM': {
-        // 0045：西面巨幅藍色海報
-        const c = document.createElement('canvas')
-        c.width = 256
-        c.height = 768
-        const x = c.getContext('2d')!
-        const gr = x.createLinearGradient(0, 0, 0, 768)
-        gr.addColorStop(0, '#5fc4e8')
-        gr.addColorStop(1, '#173a78')
-        x.fillStyle = gr
-        x.fillRect(0, 0, 256, 768)
-        x.fillStyle = 'rgba(20,30,50,0.85)'
-        x.fillRect(104, 190, 48, 250)
-        x.beginPath()
-        x.arc(128, 170, 30, 0, Math.PI * 2)
-        x.fill()
-        x.fillStyle = '#ffffff'
-        x.font = '700 60px "Noto Sans TC",sans-serif'
-        x.textAlign = 'center'
-        x.fillText('全媒體', 128, 560)
-        x.fillText('大樓', 128, 636)
-        const tex = new THREE.CanvasTexture(c)
-        tex.colorSpace = THREE.SRGBColorSpace
-        this.placeOnFace(g, b, { x: b.c.x - 60, z: b.c.z }, this.signPlane(tex, 7, 21), base + 15)
+      case 'OM':
+        // 地面照片 second_021–049：巨幅藍綠海報掛在面向噴水池廣場的東面（金屬雨庇以上）
+        this.placeOnFace(g, b, { x: b.c.x + 60, z: b.c.z }, this.signPlane(omBannerTexture(), 7.6, 19), top - 11)
         break
-      }
     }
+  }
+
+  /** 多邊形三角化後細分（邊長 ≤ maxEdge）並逐點貼地；uv 以 uvScale m 為一單位 */
+  private drapePoly(poly: Vec2[], lift: number, maxEdge: number, uvScale: number): THREE.BufferGeometry {
+    const flat = new THREE.ShapeGeometry(shapeOf(poly))
+    flat.rotateX(-Math.PI / 2)
+    const geo = new TessellateModifier(maxEdge, 10).modify(flat)
+    const p = geo.attributes.position as THREE.BufferAttribute
+    const uv: number[] = []
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i)
+      const z = p.getZ(i)
+      p.setY(i, groundHeight(x, z) + lift)
+      uv.push(x / uvScale, z / uvScale)
+    }
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    geo.computeVertexNormals()
+    return geo
+  }
+
+  /** 管理學院北面：兩層高石材圓柱柱廊、懸挑白色框帶、白色豎框、西端綠色玻璃圓柱塔與玻璃雨庇（second_024–050） */
+  private addMgmtFacade(g: THREE.Group, b: Building, base: number, top: number): void {
+    // 原始（未經編輯器調整）的北面外牆線；若使用者存過 M 的位移／旋轉，套用同一轉換
+    const e = LOADED_EDITS[b.id]
+    const c0 = e ? { x: b.c.x - e.dx, z: b.c.z - e.dz } : b.c
+    const tf = (p: Vec2): Vec2 => (e ? transformPoint(p, c0, e) : p)
+    const F0 = { x: 200.1, z: 216.9 }
+    const U = { x: -0.9816, z: 0.1911 }
+    const N = { x: 0.1911, z: 0.9816 }
+    const P = (s: number, o: number) => tf({ x: F0.x + U.x * s + N.x * o, z: F0.z + U.z * s + N.z * o })
+    const yaw = Math.atan2(-U.z, U.x) + (e?.rot ?? 0)
+    const LEN = 57
+    const GH = 7.6
+    const white = new THREE.MeshLambertMaterial({ color: 0xf1f0eb })
+    const stone = new THREE.MeshLambertMaterial({ color: 0xe2e0da })
+    const steel = new THREE.MeshPhongMaterial({ color: 0xbfc5ca, specular: 0xffffff, shininess: 80 })
+    const along = (s0: number, s1: number, o: number, y0: number, y1: number, d: number, mat: THREE.Material) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(s1 - s0, y1 - y0, d), mat)
+      const c = P((s0 + s1) / 2, o)
+      m.position.set(c.x, (y0 + y1) / 2, c.z)
+      m.rotation.y = yaw
+      m.castShadow = m.receiveShadow = true
+      g.add(m)
+      return m
+    }
+    // 柱廊大圓柱（柱心在外牆線內 0.8 m）
+    const cols: number[] = []
+    for (let s = 4; s <= 51; s += 6.7) cols.push(s)
+    for (const s of cols) {
+      const p = P(s, 0.8)
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, GH + 2, 20), stone)
+      col.position.set(p.x, base + GH / 2 - 1, p.z)
+      col.castShadow = col.receiveShadow = true
+      g.add(col)
+      this.obstacles.push({ x: p.x, z: p.z, r: 0.7 })
+    }
+    // 柱頂懸挑框帶、白色豎框、中段與頂部框帶
+    along(-0.3, LEN + 0.3, -0.15, base + GH - 0.3, base + GH + 0.9, 0.7, white)
+    // 柱廊白色天花板（朝下的面只受半球光地面色照明，故加自發光避免呈橄欖綠）
+    along(-0.3, LEN + 0.3, 1.75, base + GH - 0.42, base + GH - 0.3, 3.7, new THREE.MeshLambertMaterial({ color: 0xf1f0eb, emissive: 0x8d8b85 }))
+    for (const s of cols) along(s - 0.25, s + 0.25, -0.2, base + GH + 0.9, top, 0.4, white)
+    const mid = base + GH + (top - base - GH) * 0.5
+    along(-0.3, LEN + 0.3, -0.12, mid - 0.25, mid + 0.25, 0.35, white)
+    along(-0.3, LEN + 0.3, -0.15, top - 1.1, top + 1.0, 0.5, white)
+    // 西端綠色玻璃圓柱塔（水平白帶）
+    const cp = P(LEN - 1.2, -0.6)
+    const cylH = top - base + 1.5
+    const glass = new THREE.MeshLambertMaterial({ color: 0x5bb8a5, emissive: 0x0c2a24 })
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.0, cylH + 2, 28), glass)
+    cyl.position.set(cp.x, base - 2 + (cylH + 2) / 2, cp.z)
+    cyl.castShadow = true
+    g.add(cyl)
+    for (let y = base + FLOOR_H; y < base + cylH; y += FLOOR_H) {
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(3.06, 3.06, 0.24, 28), white)
+      band.position.set(cp.x, y, cp.z)
+      g.add(band)
+    }
+    const capM = new THREE.Mesh(new THREE.CylinderGeometry(3.12, 3.12, 0.5, 28), white)
+    capM.position.set(cp.x, base + cylH, cp.z)
+    g.add(capM)
+    this.obstacles.push({ x: cp.x, z: cp.z, r: 3.2 })
+    // 西端入口鋼構玻璃雨庇
+    const cg = new THREE.MeshLambertMaterial({ color: 0xa8d4d2, transparent: true, opacity: 0.55, depthWrite: false })
+    along(44, 50.5, 0.15, base + 4.3, base + 4.45, 6.8, cg)
+    along(44, 50.5, -3.2, base + 4.15, base + 4.5, 0.16, steel)
+    for (const s of [44.2, 50.3]) {
+      const p = P(s, -3.1)
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.6, 8), steel)
+      post.position.set(p.x, base + 2.0, p.z)
+      g.add(post)
+      this.obstacles.push({ x: p.x, z: p.z, r: 0.15 })
+    }
+  }
+
+  /** 管院噴水池廣場、OM 前米色低樓、東側夾牆坡道、北緣花台樹籬與燈柱（second_000–050） */
+  private addMgmtPlaza(): void {
+    const scene = this.scene
+    const at = (x: number, z: number) => groundHeight(x, z)
+    const granite = new THREE.MeshLambertMaterial({ color: 0x17191c })
+    const graniteTop = new THREE.MeshLambertMaterial({ color: 0x2c2f34 })
+    const led = new THREE.MeshBasicMaterial({ color: 0x7a4dff })
+    const warm = new THREE.MeshBasicMaterial({ color: 0xffd39a })
+    const steel = new THREE.MeshPhongMaterial({ color: 0xc4c9ce, specular: 0xffffff, shininess: 90 })
+    const box = (w: number, h: number, d: number, mat: THREE.Material) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
+      m.castShadow = m.receiveShadow = true
+      return m
+    }
+    // 1. 廣場淺灰拋光磁磚（貼地，屬地面鋪面不列入可移動物件）
+    const plaza = AREAS.find(a => a.id === 'm-plaza')
+    if (plaza) {
+      const tex = paleTileTexture()
+      const m = new THREE.Mesh(
+        this.drapePoly(plaza.pts, 0.07, 1.2, 1.2),
+        new THREE.MeshLambertMaterial({ map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+      )
+      m.receiveShadow = true
+      scene.add(m)
+      // 柱廊下地面（北面外牆線內 3.6 m）同款磁磚
+      const F0 = { x: 200.1, z: 216.9 }
+      const U = { x: -0.9816, z: 0.1911 }
+      const N = { x: 0.1911, z: 0.9816 }
+      const P = (s_: number, o: number): Vec2 => ({ x: F0.x + U.x * s_ + N.x * o, z: F0.z + U.z * s_ + N.z * o })
+      const arc = new THREE.Mesh(
+        this.drapePoly([P(-0.3, -0.2), P(57.2, -0.2), P(57.2, 3.7), P(-0.3, 3.7)], 0.07, 1.2, 1.2),
+        m.material,
+      )
+      arc.receiveShadow = true
+      scene.add(arc)
+    }
+    // 2. 噴水池：放射磁磚圓盤、深灰環帶、黑色八角水池（紫色光帶）、不鏽鋼球與鋼環、內圈黑石椅
+    const F = { x: 176, z: 210.5 }
+    this.capture('obj:m-fountain', '管院噴水池（不鏽鋼球雕塑與石椅）', '', 'ground', () => {
+      const y0 = at(F.x, F.z)
+      const g = new THREE.Group()
+      const drapeRing = (r0: number, r1: number, seg: number, lift: number, mat: THREE.Material) => {
+        const geo = new THREE.RingGeometry(r0, r1, 72, seg)
+        geo.rotateX(-Math.PI / 2)
+        const p = geo.attributes.position as THREE.BufferAttribute
+        for (let i = 0; i < p.count; i++) p.setY(i, at(F.x + p.getX(i), F.z + p.getZ(i)) - y0 + lift)
+        geo.computeVertexNormals()
+        const m = new THREE.Mesh(geo, mat)
+        m.receiveShadow = true
+        g.add(m)
+      }
+      drapeRing(0.05, 11, 18, 0.11, new THREE.MeshLambertMaterial({ map: radialPavingTexture(), polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }))
+      drapeRing(9.2, 9.8, 1, 0.13, new THREE.MeshLambertMaterial({ color: 0x3b3e43, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5 }))
+      drapeRing(9.8, 10.3, 1, 0.13, new THREE.MeshLambertMaterial({ color: 0x9a9b9c, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5 }))
+      const oct = (r: number, h: number, y: number, mat: THREE.Material, open = false) => {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 8, 1, open), mat)
+        m.position.y = y + h / 2
+        m.rotation.y = Math.PI / 8
+        m.castShadow = m.receiveShadow = true
+        g.add(m)
+        return m
+      }
+      oct(4.1, 0.45, -0.2, granite)
+      oct(4.16, 0.09, 0.08, led, true)
+      oct(3.3, 0.85, 0.25, granite)
+      oct(3.36, 0.08, 0.32, led, true)
+      oct(3.36, 0.08, 1.06, graniteTop)
+      const water = oct(3.0, 0.04, 1.12, new THREE.MeshPhongMaterial({ color: 0x2b4457, specular: 0x9fb8c8, shininess: 100 }))
+      water.castShadow = false
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.3, 0.7, 20), granite)
+      ped.position.y = 1.5
+      g.add(ped)
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(1.35, 32, 20),
+        new THREE.MeshPhongMaterial({ color: 0xc9cdd2, specular: 0xffffff, shininess: 140, emissive: 0x2a2d31 }),
+      )
+      ball.position.y = 2.85
+      ball.castShadow = true
+      g.add(ball)
+      const eq = new THREE.Mesh(new THREE.TorusGeometry(2.45, 0.07, 8, 72), steel)
+      eq.rotation.x = Math.PI / 2
+      eq.rotation.y = 0.12
+      eq.position.y = 2.85
+      g.add(eq)
+      for (const a of [0.5, 0.5 + Math.PI / 2]) {
+        const mer = new THREE.Mesh(new THREE.TorusGeometry(2.45, 0.06, 8, 72), steel)
+        mer.rotation.y = a
+        mer.position.y = 2.85
+        g.add(mer)
+      }
+      for (let k = 0; k < 8; k++) {
+        const a = (k * Math.PI) / 4
+        const l = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), warm)
+        l.position.set(3.05 * Math.cos(a), 1.2, 3.05 * Math.sin(a))
+        g.add(l)
+      }
+      // 內圈黑色花崗石長方塊座椅（避開東西南北四個通道）
+      for (let k = 0; k < 8; k++) {
+        const th = ((k + 0.5) * Math.PI) / 4
+        const bx = 7 * Math.cos(th)
+        const bz = 7 * Math.sin(th)
+        const bench = new THREE.Group()
+        const body = box(3.4, 0.42, 0.7, granite)
+        body.position.y = 0.31
+        const cap = box(3.45, 0.06, 0.75, graniteTop)
+        cap.position.y = 0.55
+        const glow = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.06, 0.78), led)
+        glow.position.y = 0.08
+        bench.add(body, cap, glow)
+        bench.position.set(bx, at(F.x + bx, F.z + bz) - y0, bz)
+        bench.rotation.y = -th - Math.PI / 2
+        g.add(bench)
+        for (const t of [-1.2, 0, 1.2]) this.obstacles.push({ x: F.x + bx - Math.sin(th) * t, z: F.z + bz + Math.cos(th) * t, r: 0.55 })
+      }
+      this.obstacles.push({ x: F.x, z: F.z, r: 4.3 })
+      g.position.set(F.x, y0, F.z)
+      scene.add(g)
+    })
+    // 3. 廣場邊緣長條黑石椅
+    this.capture('obj:m-benches', '管院廣場邊緣長條石椅', '', 'ground', () => {
+      for (const deg of [20, -20, 235]) {
+        const th = (deg * Math.PI) / 180
+        const x = F.x + 12.6 * Math.cos(th)
+        const z = F.z + 12.6 * Math.sin(th)
+        const bench = new THREE.Group()
+        const body = box(4.5, 0.45, 0.6, granite)
+        body.position.y = 0.3
+        const cap = box(4.55, 0.06, 0.65, graniteTop)
+        cap.position.y = 0.55
+        const glow = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.06, 0.68), led)
+        glow.position.y = 0.08
+        bench.add(body, cap, glow)
+        bench.position.set(x, at(x, z), z)
+        bench.rotation.y = -th - Math.PI / 2
+        scene.add(bench)
+        for (const t of [-1.6, 0, 1.6]) this.obstacles.push({ x: x - Math.sin(th) * t, z: z + Math.cos(th) * t, r: 0.5 })
+      }
+    })
+    // 4. OM 東面前的米色低樓：褐色橫百葉＋紅字「世新大學管理學院」、玻璃門、灰色金屬雨庇
+    this.capture('obj:om-annex', '全媒體大樓前米色低樓（管院紅字招牌）', '', 'ground', () => {
+      const C = { x: 160.95, z: 205.78 }
+      const rot = 0.191
+      const g = new THREE.Group()
+      const body = box(5.5, 5.3, 8.6, new THREE.MeshLambertMaterial({ color: 0xd9cfbd }))
+      body.position.y = 2.15
+      const canopy = box(6.6, 0.16, 9.4, new THREE.MeshLambertMaterial({ color: 0x6c7279 }))
+      canopy.position.set(0.55, 5.15, 0)
+      const back = box(0.08, 2.4, 4.6, new THREE.MeshLambertMaterial({ color: 0x3b3733 }))
+      back.position.set(2.79, 1.75, 1.9)
+      g.add(body, canopy, back)
+      const slatMat = new THREE.MeshLambertMaterial({ color: 0x7a6656 })
+      for (let i = 0; i < 10; i++) {
+        const sl = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 4.6), slatMat)
+        sl.position.set(2.86, 0.65 + i * 0.24, 1.9)
+        g.add(sl)
+      }
+      const slot = box(0.06, 3.6, 0.9, new THREE.MeshLambertMaterial({ color: 0x2e2e31 }))
+      slot.position.set(2.8, 2.0, -0.6)
+      g.add(slot)
+      // 紅字招牌（透明底）
+      const cv = document.createElement('canvas')
+      cv.width = 1024
+      cv.height = 128
+      const cx = cv.getContext('2d')!
+      cx.fillStyle = '#d42a2f'
+      cx.strokeStyle = '#d42a2f'
+      cx.lineWidth = 8
+      cx.beginPath()
+      cx.arc(70, 64, 42, 0, Math.PI * 2)
+      cx.stroke()
+      cx.font = '900 40px sans-serif'
+      cx.textAlign = 'center'
+      cx.fillText('世新', 70, 78)
+      cx.font = '800 86px "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif'
+      cx.textAlign = 'left'
+      cx.fillText('世新大學管理學院', 140, 96)
+      const st = new THREE.CanvasTexture(cv)
+      st.colorSpace = THREE.SRGBColorSpace
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.58), new THREE.MeshBasicMaterial({ map: st, transparent: true }))
+      sign.position.set(2.93, 1.95, 1.9)
+      sign.rotation.y = Math.PI / 2
+      g.add(sign)
+      const frame = box(0.2, 2.9, 2.1, new THREE.MeshLambertMaterial({ color: 0xe6e6e2 }))
+      frame.position.set(2.8, 1.45, -2.4)
+      const door = box(0.06, 2.5, 1.6, new THREE.MeshLambertMaterial({ color: 0x2e4b47 }))
+      door.position.set(2.92, 1.25, -2.4)
+      g.add(frame, door)
+      const y = at(C.x, C.z)
+      g.position.set(C.x, y, C.z)
+      g.rotation.y = rot
+      scene.add(g)
+      const cos = Math.cos(rot)
+      const sin = Math.sin(rot)
+      for (const lx of [-1.5, 1.4]) for (const lz of [-3, -1, 1, 3]) {
+        this.obstacles.push({ x: C.x + lx * cos + lz * sin, z: C.z - lx * sin + lz * cos, r: 1.4 })
+      }
+    })
+    // 5. 東側夾牆坡道：灰藍小方磚坡面、兩側洗石子矮牆、不鏽鋼欄杆與扶手（second_008–021）
+    this.capture('obj:m-ramp', '管院東側夾牆坡道（洗石子牆＋不鏽鋼扶手）', '', 'none', () => {
+      const A = { x: 201.6, z: 216.4 }
+      const B = { x: 190.2, z: 200.6 }
+      const L = Math.hypot(B.x - A.x, B.z - A.z)
+      const d = { x: (B.x - A.x) / L, z: (B.z - A.z) / L }
+      const r = { x: -d.z, z: d.x }
+      const yA = at(A.x, A.z)
+      const yB = at(B.x, B.z)
+      const floor = new THREE.Mesh(
+        this.ribbon([A, B], 2.6, 0.12),
+        new THREE.MeshLambertMaterial({ color: 0x8f99a3, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
+      )
+      floor.receiveShadow = true
+      scene.add(floor)
+      const g = new THREE.Group()
+      g.position.set((A.x + B.x) / 2, (yA + yB) / 2, (A.z + B.z) / 2)
+      g.rotation.y = Math.atan2(-d.z, d.x)
+      const tilt = new THREE.Group()
+      tilt.rotation.z = Math.atan2(yB - yA, L)
+      g.add(tilt)
+      const wall = (off: number, h: number, th: number) => {
+        const m = box(L + 0.6, h + 0.6, th, new THREE.MeshLambertMaterial({ map: pebbleTexture(L / 1.6, (h + 0.6) / 1.6) }))
+        m.position.set(0, h / 2 - 0.3, off)
+        tilt.add(m)
+        const capS = box(L + 0.7, 0.08, th + 0.06, new THREE.MeshLambertMaterial({ color: 0xa39c90 }))
+        capS.position.set(0, h + 0.04, off)
+        tilt.add(capS)
+      }
+      wall(1.5, 1.45, 0.35)
+      wall(-1.5, 0.95, 0.3)
+      const railTop = (off: number, y: number) => {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, L, 8), steel)
+        m.rotation.z = Math.PI / 2
+        m.position.set(0, y, off)
+        tilt.add(m)
+      }
+      railTop(1.5, 2.45)
+      railTop(1.5, 1.95)
+      railTop(-1.5, 1.05)
+      for (let t = -L / 2 + 0.4; t <= L / 2; t += 1.2) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 6), steel)
+        post.position.set(t, 1.95, 1.5)
+        tilt.add(post)
+      }
+      for (let t = -L / 2 + 0.6; t <= L / 2; t += 2.4) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.12, 6), steel)
+        post.position.set(t, 1.0, -1.5)
+        tilt.add(post)
+      }
+      // 牆外側（小巷面）的禁菸標示
+      const cv = document.createElement('canvas')
+      cv.width = 96
+      cv.height = 128
+      const cx = cv.getContext('2d')!
+      cx.fillStyle = '#ffffff'
+      cx.fillRect(0, 0, 96, 128)
+      cx.strokeStyle = '#d0202a'
+      cx.lineWidth = 8
+      cx.beginPath()
+      cx.arc(48, 46, 30, 0, Math.PI * 2)
+      cx.moveTo(27, 25)
+      cx.lineTo(69, 67)
+      cx.stroke()
+      cx.fillStyle = '#222222'
+      cx.font = '700 20px sans-serif'
+      cx.textAlign = 'center'
+      cx.fillText('禁止吸菸', 48, 112)
+      const st = new THREE.CanvasTexture(cv)
+      st.colorSpace = THREE.SRGBColorSpace
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.6), new THREE.MeshLambertMaterial({ map: st }))
+      sign.position.set(-L / 2 + 2.5, 0.85, 1.5 + 0.19)
+      tilt.add(sign)
+      scene.add(g)
+      for (let t = 0; t <= L; t += 1) {
+        for (const off of [1.5, -1.5]) this.obstacles.push({ x: A.x + d.x * t + r.x * off, z: A.z + d.z * t + r.z * off, r: 0.25 })
+      }
+    })
+    // 6. 北緣草坪、洗石子花台矮牆（暖色投光燈）、樹籬與小樹
+    this.capture('obj:m-hedge', '管院廣場北緣草坪、花台與樹籬', '', 'none', () => {
+      const lawnPoly: Vec2[] = [
+        { x: 162, z: 192.8 },
+        { x: 186, z: 192.8 },
+        { x: 189.2, z: 198.6 },
+        { x: 176, z: 195.9 },
+        { x: 162, z: 196.1 },
+      ]
+      const lawn = new THREE.Mesh(
+        this.drapePoly(lawnPoly, 0.09, 1, 1),
+        new THREE.MeshLambertMaterial({ color: 0x5e9a46, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+      )
+      lawn.receiveShadow = true
+      scene.add(lawn)
+      const edge: Vec2[] = [
+        { x: 162, z: 196.25 },
+        { x: 176, z: 196.05 },
+        { x: 189.4, z: 198.9 },
+      ]
+      const wallMat = new THREE.MeshLambertMaterial({ map: pebbleTexture(4, 0.4) })
+      for (let i = 0; i < edge.length - 1; i++) {
+        const a = edge[i]
+        const b = edge[i + 1]
+        const len = Math.hypot(b.x - a.x, b.z - a.z)
+        const yaw = Math.atan2(-(b.z - a.z), b.x - a.x)
+        const m = box(len, 0.75, 0.3, wallMat)
+        m.position.set((a.x + b.x) / 2, at((a.x + b.x) / 2, (a.z + b.z) / 2) + 0.15, (a.z + b.z) / 2)
+        m.rotation.y = yaw
+        scene.add(m)
+        for (let t = 1.5; t < len; t += 3) {
+          const px = a.x + ((b.x - a.x) * t) / len
+          const pz = a.z + ((b.z - a.z) * t) / len
+          const l = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.06), warm)
+          l.position.set(px + Math.sin(yaw) * 0.17, at(px, pz) + 0.3, pz + Math.cos(yaw) * 0.17)
+          l.rotation.y = yaw
+          scene.add(l)
+        }
+      }
+      const hedgeMats = [new THREE.MeshLambertMaterial({ color: 0x3c6a32 }), new THREE.MeshLambertMaterial({ color: 0x467a3a })]
+      let k = 0
+      for (let x = 162.5; x < 186; x += 3, k++) {
+        const h = 1.3 + ((k * 37) % 5) * 0.06
+        const m = box(3.05, h, 1.1, hedgeMats[k % 2])
+        m.position.set(x + 1.5, at(x + 1.5, 193.5) + h / 2 - 0.1, 193.5)
+        scene.add(m)
+      }
+      const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6a5242 })
+      const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8a3e, flatShading: true })
+      for (const [tx, tz] of [
+        [170.5, 194.9],
+        [181.5, 195.4],
+      ]) {
+        const y = at(tx, tz)
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 3.4, 7), trunkMat)
+        trunk.position.set(tx, y + 1.7, tz)
+        const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.0, 1), leaf)
+        crown.position.set(tx, y + 4.4, tz)
+        crown.scale.set(1, 0.85, 1)
+        crown.castShadow = trunk.castShadow = true
+        scene.add(trunk, crown)
+      }
+    })
+    // 7. 黑色燈柱
+    const lamps: Vec2[] = [
+      { x: 185, z: 197.3 },
+      { x: 172, z: 195.4 },
+      { x: 163.5, z: 195.6 },
+      { x: 192.5, z: 213.5 },
+      { x: 162.6, z: 215.6 },
+    ]
+    lamps.forEach((p, i) => {
+      this.capture(`obj:m-lamp-${i + 1}`, `管院廣場燈柱 ${i + 1}`, '', 'ground', () => {
+        const y = at(p.x, p.z)
+        const g = new THREE.Group()
+        const dark = new THREE.MeshLambertMaterial({ color: 0x1f2226 })
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 4.2, 8), dark)
+        pole.position.y = 2.1
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.5, 0.36), dark)
+        head.position.y = 4.45
+        const glow = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.3, 0.38), new THREE.MeshBasicMaterial({ color: 0xfff1cf }))
+        glow.position.y = 4.4
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.22, 4), dark)
+        cap.position.y = 4.81
+        cap.rotation.y = Math.PI / 4
+        g.add(pole, head, glow, cap)
+        g.traverse(o => (o.castShadow = true))
+        g.position.set(p.x, y, p.z)
+        scene.add(g)
+        this.obstacles.push({ x: p.x, z: p.z, r: 0.2 })
+      })
+    })
   }
 
   private addNeighbors(): void {
