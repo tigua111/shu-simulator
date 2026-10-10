@@ -51,8 +51,9 @@ export class Explorer {
   reducedMotion = false
   /** 過場／對話中：停用移動與滑鼠環顧，鏡頭由劇情控制 */
   locked = false
-  /** 劇情鏡頭特效：dy 眼高偏移、roll 側傾、shake 晃動強度 */
-  readonly camFx = { dy: 0, roll: 0, shake: 0 }
+  /** 劇情鏡頭特效：dy 眼高偏移、roll 側傾、shake 晃動強度、kick 俯仰衝擊（弧度）、fov 視角衝擊（度） */
+  readonly camFx = { dy: 0, roll: 0, shake: 0, kick: 0, fov: 0 }
+  private fovBase = 0
   /** 劇情關卡：過濾每一步移動（例如校門警衛未放行前不得進門） */
   moveFilter: ((from: Vec2, to: Vec2) => Vec2) | null = null
   private eyeY = groundHeight(START.pos.x, START.pos.z) + EYE
@@ -331,7 +332,19 @@ export class Explorer {
     const sh = this.reducedMotion ? 0 : this.camFx.shake
     const jx = sh ? (Math.random() - 0.5) * sh : 0
     const jy = sh ? (Math.random() - 0.5) * sh : 0
-    this.camera.rotation.set(this.pitch + jx, this.yaw + jy, this.camFx.roll, 'YXZ')
+    const kick = this.reducedMotion ? 0 : this.camFx.kick
+    this.camera.rotation.set(this.pitch + jx + kick, this.yaw + jy, this.camFx.roll, 'YXZ')
+    // 視角衝擊：暫時縮小 FOV（拉近），結束後還原原本的值（不覆寫其他工具設定的 FOV）
+    const fk = this.reducedMotion ? 0 : this.camFx.fov
+    if (fk !== 0) {
+      if (!this.fovBase) this.fovBase = this.camera.fov
+      this.camera.fov = this.fovBase + fk
+      this.camera.updateProjectionMatrix()
+    } else if (this.fovBase) {
+      this.camera.fov = this.fovBase
+      this.fovBase = 0
+      this.camera.updateProjectionMatrix()
+    }
   }
 
   private nearestRouteS(): number {

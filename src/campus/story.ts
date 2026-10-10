@@ -4,7 +4,8 @@ import type { Explorer } from './explorer'
 import { GATE_NORMAL, TUNNEL } from './data'
 import { PROJECTION_LINES, drawProjection, type StoryProps } from './storyProps'
 import { CAR_L, CAR_W } from './car'
-import { sfx, unlockAudio } from './sfx'
+import { sfx, unlockAudio, type Loop } from './sfx'
+import type { HitEffect, HitInfo, Milestone } from './car'
 import { StoryUI, storyTag } from '../ui/storyUi'
 import type { Vec2 } from './data'
 
@@ -83,6 +84,19 @@ export class Story {
   private readonly hammerPivot = new THREE.Group()
   private swingT = -1
   private swingHit = false
+  /** 揮擊結果：null＝尚未打到、true＝命中、false＝揮空 */
+  private swingRes: boolean | null = null
+  private swingFrom = -0.25
+  private whooshed = false
+  /** 打擊停頓（hit-stop）剩餘秒數：錘子與碎片短暫凍結，打擊更有重量 */
+  private hitStop = 0
+  private queued = false
+  private queuedNdc: THREE.Vector2 | null = null
+  private combo = 0
+  private lastHitT = -10
+  private heavyHit = false
+  private alarmLoop: Loop | null = null
+  private readonly smear: THREE.Mesh
   private equipT = 0
   private lastNdc: THREE.Vector2 | null = null
   private flashSprite: THREE.Sprite | null = null
@@ -108,6 +122,7 @@ export class Story {
     ui.onRevive = () => this.revive()
     ui.onAction = () => this.action(null)
     this.buildTags()
+    this.smear = Story.buildSmear()
     this.buildHammer()
     if (!explorer.camera.parent) scene.add(explorer.camera)
     window.addEventListener(
@@ -198,7 +213,64 @@ export class Story {
     this.hammerPivot.position.set(0.3, -0.95, -0.42)
     this.hammerPivot.rotation.x = -0.25
     this.hammerPivot.visible = false
+    this.hammer.scale.setScalar(1.18)
     this.explorer.camera.add(this.hammerPivot)
+    this.hammerPivot.add(this.smear)
+  }
+  /**
+   * 錘頭下砸的拖尾殘影：掛在錘子樞紐上跟著轉，位於錘頭「後方」（樞紐局部角度 0 → +TRAIL），
+   * 靠錘頭最亮、往後淡出。
+   */
+  private static buildSmear(): THREE.Mesh {
+    const N = 14
+    const TRAIL = 1.05
+    const r0 = 0.3
+    const r1 = 0.6
+    const pos: number[] = []
+    const uv: number[] = []
+    const idx: number[] = []
+    for (let i = 0; i <= N; i++) {
+      const k = i / N
+      const a = TRAIL * k
+      for (const [r, v] of [
+        [r0, 0],
+        [r1, 1],
+      ] as const) {
+        pos.push(-0.07, r * Math.cos(a), r * Math.sin(a))
+        uv.push(1 - k, v)
+      }
+      if (i < N) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2)
+    }
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    g.setIndex(idx)
+    const c = document.createElement('canvas')
+    c.width = 128
+    c.height = 32
+    const x = c.getContext('2d')!
+    const grd = x.createLinearGradient(0, 0, 128, 0)
+    grd.addColorStop(0, 'rgba(255,255,255,0)')
+    grd.addColorStop(0.6, 'rgba(240,244,255,0.35)')
+    grd.addColorStop(1, 'rgba(255,255,255,0.9)')
+    x.fillStyle = grd
+    x.fillRect(0, 0, 128, 32)
+    // 內緣（握把附近）較淡、外緣（錘頭軌跡）較濃
+    const vg = x.createLinearGradient(0, 0, 0, 32)
+    vg.addColorStop(0, 'rgba(0,0,0,0.85)')
+    vg.addColorStop(0.55, 'rgba(0,0,0,0.25)')
+    vg.addColorStop(0.8, 'rgba(0,0,0,0)')
+    vg.addColorStop(1, 'rgba(0,0,0,0.5)')
+    x.globalCompositeOperation = 'destination-out'
+    x.fillStyle = vg
+    x.fillRect(0, 0, 128, 32)
+    const t = new THREE.CanvasTexture(c)
+    t.colorSpace = THREE.SRGBColorSpace
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }))
+    m.frustumCulled = false
+    m.renderOrder = 9
+    m.visible = false
+    return m
   }
 
   // ─── 前校門警衛 ──────────────────────────────────────
@@ -363,6 +435,8 @@ export class Story {
     this.explorer.camFx.dy = 0
     this.explorer.camFx.roll = 0
     this.explorer.camFx.shake = 0
+    this.explorer.camFx.kick = 0
+    this.explorer.camFx.fov = 0
     this.guardDraw = 0
     this.guardStep.set(0, 0, 0)
     this.gate = 'idle'
@@ -406,16 +480,33 @@ export class Story {
       this.equipped = true
       this.equipT = 0
       this.hammerPivot.visible = true
-      this.ui.setHud(`損壞程度 ${Math.round(this.props.car!.audi.damage)}%`)
+      this.updateCarHud()
       this.ui.subtitle('你拿出了錘子。對準車子按左鍵敲下去。', 2600)
       return
     }
-    if (this.swingT >= 0) return
+    // 揮擊中：已經打下去之後再點＝排入下一下（連打不會被吃掉）
+    if (this.swingT >= 0) {
+      if (this.swingRes !== null) {
+        this.queued = true
+        this.queuedNdc = ndc
+      }
+      return
+    }
+    this.startSwing(ndc)
+  }
+  private startSwing(ndc: THREE.Vector2 | null): void {
+    this.swingFrom = this.hammerPivot.rotation.x
     this.swingT = 0
     this.swingHit = false
+    this.swingRes = null
+    this.whooshed = false
+    this.queued = false
     this.lastNdc = ndc
+    // 蓄力：鏡頭微微上抬
+    this.explorer.camFx.kick += 0.014
   }
-  private strike(): void {
+  /** 錘子打到的瞬間：回傳是否命中 */
+  private strike(): boolean {
     const car = this.props.car!
     const cam = this.explorer.camera
     cam.updateMatrixWorld(true)
@@ -424,24 +515,85 @@ export class Story {
     const hits = this.ray.intersectObjects(car.audi.targets, false).filter(h => !car.audi.passThrough(h.object))
     const h = hits[0]
     if (!h) {
-      sfx.whoosh()
-      return
+      sfx.whoosh(true)
+      this.combo = 0
+      return false
     }
-    const power = 0.85 + Math.random() * 0.3
+    // 連擊：1.1 秒內接著敲，力道逐下加重（最多 5 連）
+    this.combo = this.time - this.lastHitT < 1.1 ? Math.min(this.combo + 1, 9) : 1
+    this.lastHitT = this.time
+    const power = (0.9 + Math.random() * 0.25) * (1 + 0.14 * (Math.min(this.combo, 5) - 1))
     const info = car.audi.hit(h, this.ray.ray.direction, power)
-    if (info.effect === 'crack') sfx.crack()
-    else if (info.effect === 'shatter') sfx.shatter()
-    else if (info.effect === 'break') sfx.pop()
-    else sfx.metal(info.effect === 'clang' ? 0.5 : power)
-    this.explorer.camFx.shake = 0.018
+    this.feedback(info, power)
+    return true
+  }
+  /** 依破壞結果給出鏡頭、畫面、音效、震動回饋 */
+  private feedback(info: HitInfo, power: number): void {
+    const heavy = info.heavy
+    this.heavyHit = heavy
+    const fx = this.explorer.camFx
+    fx.shake = Math.max(fx.shake, heavy ? 0.075 : 0.042)
+    fx.kick = heavy ? -0.08 : -0.05
+    fx.fov = heavy ? -7 : -4
+    this.hitStop = heavy ? 0.11 : 0.07
+    const snd: Record<HitEffect, () => void> = {
+      dent: () => sfx.smash(power, heavy),
+      crack: () => {
+        sfx.smash(0.55, false)
+        sfx.crack()
+      },
+      shatter: () => sfx.shatter(),
+      break: () => {
+        sfx.smash(0.5, false)
+        sfx.pop()
+      },
+      detach: () => {
+        sfx.smash(0.75, false)
+        sfx.clatter()
+      },
+      clang: () => sfx.clang(),
+      thud: () => sfx.thud(),
+      deflate: () => sfx.deflate(),
+    }
+    snd[info.effect]()
+    const label: Record<HitEffect, string> = {
+      dent: `${info.zone}凹陷`,
+      crack: '玻璃龜裂',
+      shatter: '玻璃碎裂！',
+      break: `${info.zone}破裂`,
+      detach: `${info.zone}掉了！`,
+      clang: '鏗！',
+      thud: '彈回來了',
+      deflate: '爆胎！',
+    }
+    this.ui.impact(heavy)
+    this.ui.popDamage(`+${Math.max(1, Math.round(info.added))}%　${label[info.effect]}`, heavy)
+    const banner: Record<Milestone, string> = { alarm: '警報大作！', smoke: '開始冒煙了！', fire: '起火了！', totaled: '董事會專車 全毀！' }
+    for (const m of info.milestones) {
+      this.ui.banner(banner[m])
+      if (m === 'fire') sfx.ignite()
+      if (m === 'totaled') sfx.totaled()
+    }
+    if (this.coarse) navigator.vibrate?.(heavy ? [35, 25, 45] : 24)
     this.ui.subtitle(`<b>你：</b>${CAR_LINE}`, 2400)
-    this.ui.setHud(`${info.zone}・損壞程度 ${Math.round(info.total)}%`)
+    this.updateCarHud(info)
+  }
+  private updateCarHud(info?: HitInfo): void {
+    const audi = this.props.car!.audi
+    // 未全毀前最多顯示 99%，避免 99.7 四捨五入成 100% 卻還沒報廢
+    const pct = audi.totaled ? 100 : Math.min(99, Math.round(audi.damage))
+    const head = audi.totaled ? '已報廢' : info ? info.zone : '董事會專車'
+    const combo = this.combo >= 2 && info ? `　連擊 ×${this.combo}` : ''
+    this.ui.setHud(`${head}・損壞程度 ${pct}%${combo}`, audi.damage)
   }
   private unequip(): void {
     if (!this.equipped) return
     this.equipped = false
     this.hammerPivot.visible = false
+    this.smear.visible = false
     this.swingT = -1
+    this.hitStop = 0
+    this.queued = false
     this.ui.setHud(null)
   }
 
@@ -486,6 +638,14 @@ export class Story {
     const p = ex.pos
     // 鏡頭特效衰減
     if (ex.camFx.shake > 0) ex.camFx.shake = Math.max(0, ex.camFx.shake - dt * 0.35)
+    if (ex.camFx.kick !== 0) {
+      ex.camFx.kick *= Math.exp(-dt * 11)
+      if (Math.abs(ex.camFx.kick) < 2e-4) ex.camFx.kick = 0
+    }
+    if (ex.camFx.fov !== 0) {
+      ex.camFx.fov *= Math.exp(-dt * 9)
+      if (Math.abs(ex.camFx.fov) < 0.05) ex.camFx.fov = 0
+    }
     if (this.flashSprite && this.flashT > 0) {
       this.flashT -= dt
       if (this.flashT <= 0) this.flashSprite.visible = false
@@ -616,9 +776,17 @@ export class Story {
   private updateCar(dt: number, walking: boolean, p: Vec2): void {
     const car = this.props.car
     if (!car) return
-    car.audi.update(dt)
+    // 打擊停頓：碎片與車殼彈跳一起凍結一瞬間
+    car.audi.update(this.hitStop > 0 ? 0 : dt)
     const { lx, lz, d } = this.carLocal(p)
     const centerD = Math.hypot(lx, lz)
+    // 防盜警報：損壞 20% 起、最後一下後持續約 9 秒；離開 30 m 外或進入編輯時停止
+    const wantAlarm = car.audi.alarmT > 0 && centerD < 30 && !this.isEditing()
+    if (wantAlarm && !this.alarmLoop) this.alarmLoop = sfx.alarm()
+    else if (!wantAlarm && this.alarmLoop) {
+      this.alarmLoop.stop()
+      this.alarmLoop = null
+    }
     if (this.carRoof) this.carRoof.visible = walking && centerD < 24
     this.nearCar = walking && d < 1.9
     if (this.carPrompt) {
@@ -637,28 +805,80 @@ export class Story {
       this.ui.setAction(walking && !this.blocking ? label : null)
     }
     this.ui.setCrosshair(this.equipped && (this.explorer.isLocked || this.coarse))
-    // 錘子動畫：拿出 → 舉起 → 敲下 → 收回
+    // 錘子動畫：拿出 → 蓄力上舉 → 加速下砸（殘影）→ 命中停頓 → 反彈 → 收回；揮空則順勢甩到底
     if (!this.equipped) return
     this.equipT = Math.min(1, this.equipT + dt / 0.25)
     const pv = this.hammerPivot
     pv.position.y = lerp(-0.95, -0.36, ease(this.equipT))
-    if (this.swingT >= 0) {
-      this.swingT += dt
-      const s = this.swingT
-      if (s < 0.07) pv.rotation.x = lerp(-0.25, 0.4, s / 0.07)
-      else if (s < 0.15) pv.rotation.x = lerp(0.4, -1.15, (s - 0.07) / 0.08)
-      else if (s < 0.45) pv.rotation.x = lerp(-1.15, -0.25, ease((s - 0.15) / 0.3))
+    const sm = this.smear.material as THREE.MeshBasicMaterial
+    let adt = dt
+    if (this.hitStop > 0) {
+      this.hitStop -= dt
+      if (this.hitStop > 0) adt = 0
       else {
-        pv.rotation.x = -0.25
-        this.swingT = -1
+        adt = -this.hitStop
+        this.hitStop = 0
       }
-      if (!this.swingHit && s >= 0.15) {
-        this.swingHit = true
-        this.strike()
+    }
+    if (this.swingT >= 0) {
+      const W = 0.1
+      const D = 0.165
+      this.swingT += adt
+      const s = this.swingT
+      if (s < W) {
+        const k = 1 - Math.pow(1 - s / W, 2)
+        pv.rotation.x = lerp(this.swingFrom, 0.95, k)
+        pv.position.z = lerp(-0.42, -0.36, k)
+        this.hammer.rotation.z = lerp(0.15, -0.12, k)
+      } else if (s < D || this.swingRes === null) {
+        // 下砸：加速（ease-in）
+        const k = Math.min(1, (s - W) / (D - W))
+        pv.rotation.x = lerp(0.95, -1.35, k * k)
+        pv.position.z = lerp(-0.36, -0.54, k)
+        this.hammer.rotation.z = lerp(-0.12, 0.2, k)
+        if (!this.whooshed) {
+          this.whooshed = true
+          sfx.whoosh(false)
+        }
+        this.smear.visible = true
+        sm.opacity = Math.min(1, 0.35 + 0.9 * k)
+        if (k >= 1 && !this.swingHit) {
+          this.swingHit = true
+          this.swingRes = this.strike()
+        }
+      } else if (this.swingRes) {
+        // 命中：停頓中錘頭抖動，之後反彈抬起再收回
+        const r = s - D
+        const jit = this.hitStop > 0 ? (Math.random() - 0.5) * (this.heavyHit ? 0.09 : 0.05) : 0
+        if (r < 0.1) pv.rotation.x = lerp(-1.35, -0.9, ease(r / 0.1)) + jit
+        else pv.rotation.x = lerp(-0.9, -0.25, ease(Math.min(1, (r - 0.1) / 0.24)))
+        pv.position.z = lerp(-0.54, -0.42, Math.min(1, r / 0.3))
+        this.hammer.rotation.z = 0.15 + 0.05 * Math.sin(r * 60) * Math.exp(-r * 12) + jit
+        if (r >= 0.34 || (this.queued && r >= 0.12)) this.endSwing()
+      } else {
+        // 揮空：順勢甩到底再慢慢收回
+        const r = s - D
+        if (r < 0.1) pv.rotation.x = lerp(-1.35, -1.8, ease(r / 0.1))
+        else pv.rotation.x = lerp(-1.8, -0.25, ease(Math.min(1, (r - 0.1) / 0.3)))
+        pv.position.z = lerp(-0.54, -0.42, Math.min(1, r / 0.35))
+        this.hammer.rotation.z = lerp(0.2, 0.15, Math.min(1, r / 0.3))
+        if (r >= 0.4 || (this.queued && r >= 0.16)) this.endSwing()
+      }
+      if (this.swingRes !== null && this.smear.visible) {
+        sm.opacity = Math.max(0, sm.opacity - adt * 9)
+        if (sm.opacity <= 0) this.smear.visible = false
       }
     } else {
       pv.rotation.x = -0.25 + 0.02 * Math.sin(this.time * 2)
+      pv.position.z = -0.42
+      this.smear.visible = false
     }
+  }
+  private endSwing(): void {
+    this.swingT = -1
+    this.smear.visible = false
+    this.hammer.rotation.z = 0.15
+    if (this.queued) this.startSwing(this.queuedNdc)
   }
 
   private updateLift(dt: number, walking: boolean, p: Vec2): void {

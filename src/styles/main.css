@@ -944,6 +944,10 @@ body.is-dragging #game {
 #ui > .ssub,
 #ui > .shud,
 #ui > .scross,
+#ui > .simpact,
+#ui > .shit,
+#ui > .sbanner,
+#ui > .spop,
 #ui > .sact,
 #ui > .sdead {
   pointer-events: none;
@@ -1155,6 +1159,204 @@ body.is-story .hint {
 }
 .shud.is-open {
   opacity: 1;
+}
+.shud {
+  min-width: 200px;
+  text-align: center;
+}
+.shud-t {
+  display: block;
+}
+.shud-bar {
+  display: block;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+.shud-bar b {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #ffd166, #ff9f1c);
+  transition: width 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+.shud.is-hot .shud-bar b {
+  background: linear-gradient(90deg, #ff9f1c, #ff4d2e);
+}
+.shud.is-crit {
+  color: #ff6b5b;
+}
+.shud.is-crit .shud-bar b {
+  background: linear-gradient(90deg, #ff4d2e, #ff1f4b);
+  animation: shudpulse 0.5s ease-in-out infinite alternate;
+}
+@keyframes shudpulse {
+  to {
+    filter: brightness(1.6);
+  }
+}
+.shud.is-open.is-bump {
+  animation: shudbump 0.26s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+@keyframes shudbump {
+  0% {
+    transform: translateX(-50%) scale(1.22);
+  }
+  100% {
+    transform: translateX(-50%) scale(1);
+  }
+}
+/* 敲車打擊回饋：畫面邊緣白閃 */
+.simpact {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, rgba(255, 250, 235, 0) 38%, rgba(255, 240, 200, 0.78) 100%);
+  opacity: 0;
+  z-index: 44;
+}
+.simpact.is-heavy {
+  background: radial-gradient(ellipse at 50% 50%, rgba(255, 236, 200, 0.18) 20%, rgba(255, 178, 92, 0.8) 100%);
+}
+.simpact.is-on {
+  animation: simpact 0.22s ease-out;
+}
+.simpact.is-heavy.is-on {
+  animation-duration: 0.36s;
+}
+@keyframes simpact {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* 命中標記：準星外的四道斜線 */
+.shit {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  z-index: 46;
+}
+.shit i {
+  position: absolute;
+  left: -1.5px;
+  top: -7px;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+.shit i:nth-child(1) {
+  transform: rotate(45deg) translateY(-20px);
+}
+.shit i:nth-child(2) {
+  transform: rotate(135deg) translateY(-20px);
+}
+.shit i:nth-child(3) {
+  transform: rotate(225deg) translateY(-20px);
+}
+.shit i:nth-child(4) {
+  transform: rotate(315deg) translateY(-20px);
+}
+.shit.is-heavy i {
+  background: #ff4d3a;
+  height: 18px;
+}
+.shit.is-on {
+  animation: shit 0.28s ease-out;
+}
+@keyframes shit {
+  0% {
+    opacity: 1;
+    transform: scale(1.45);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+/* 跳出的損壞數字 */
+.spop {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(calc(-50% + var(--dx, 0px)), -70px);
+  color: #ffd166;
+  font-size: 1.6rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-shadow:
+    0 2px 0 #000,
+    0 0 14px rgba(255, 120, 0, 0.75);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 47;
+  animation: spop 0.95s ease-out forwards;
+}
+.spop.is-heavy {
+  color: #ff5a3c;
+  font-size: 2.2rem;
+}
+@keyframes spop {
+  0% {
+    opacity: 1;
+    transform: translate(calc(-50% + var(--dx, 0px)), -34px) scale(1.7);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(calc(-50% + var(--dx, 0px)), -62px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx, 0px)), -120px) scale(0.9);
+  }
+}
+/* 損壞里程碑橫幅（警報大作／冒煙／起火／全毀） */
+.sbanner {
+  position: fixed;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%) rotate(-4deg);
+  padding: 8px 26px;
+  border: 4px solid #fff;
+  border-radius: 6px;
+  background: #a3122b;
+  color: #fff;
+  font-size: 2.4rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.45),
+    0 0 0 3px #a3122b;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 46;
+}
+.sbanner.is-on {
+  opacity: 1;
+  animation: sbanner 0.34s cubic-bezier(0.2, 1.5, 0.35, 1);
+}
+@keyframes sbanner {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(-4deg) scale(2.3);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(-4deg) scale(1);
+  }
 }
 .scross {
   position: fixed;
@@ -1712,6 +1914,17 @@ body.has-touch .keys-touch {
   #ui > .shud {
     top: calc(48px + var(--safe-t));
     font-size: 0.8rem;
+  }
+  #ui > .sbanner {
+    top: 34%;
+    font-size: 1.6rem;
+    padding: 5px 18px;
+  }
+  .spop {
+    font-size: 1.25rem;
+  }
+  .spop.is-heavy {
+    font-size: 1.7rem;
   }
   #ui > .sact {
     width: 64px;

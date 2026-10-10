@@ -20,6 +20,13 @@ export class StoryUI {
   private readonly hud: HTMLElement
   private readonly cross: HTMLElement
   private readonly act: HTMLButtonElement
+  private readonly impactEl: HTMLElement
+  private readonly marker: HTMLElement
+  private readonly bannerEl: HTMLElement
+  private readonly hudText: HTMLElement
+  private readonly hudBar: HTMLElement
+  private readonly host: HTMLElement
+  private bannerTimer = 0
   private typing: { text: string; i: number; timer: number; done: () => void } | null = null
   private subTimer = 0
   choicesOpen = false
@@ -49,6 +56,16 @@ export class StoryUI {
     this.death.querySelector('[data-revive]')!.addEventListener('click', () => this.onRevive())
     this.sub = el('ssub')
     this.hud = el('shud')
+    this.hudText = el('shud-t', 'span')
+    const bar = el('shud-bar', 'i')
+    this.hudBar = el('', 'b')
+    bar.append(this.hudBar)
+    this.hud.append(this.hudText, bar)
+    this.impactEl = el('simpact')
+    this.marker = el('shit')
+    this.marker.innerHTML = '<i></i><i></i><i></i><i></i>'
+    this.bannerEl = el('sbanner')
+    this.host = host
     this.cross = el('scross')
     this.act = el('sact', 'button') as HTMLButtonElement
     this.act.type = 'button'
@@ -57,7 +74,7 @@ export class StoryUI {
       e.stopPropagation()
       this.onAction()
     })
-    host.append(this.flash, this.dlg, this.sub, this.hud, this.cross, this.act, this.death)
+    host.append(this.impactEl, this.flash, this.dlg, this.sub, this.hud, this.cross, this.marker, this.bannerEl, this.act, this.death)
   }
 
   get dialogOpen(): boolean {
@@ -160,9 +177,50 @@ export class StoryUI {
     clearTimeout(this.subTimer)
     this.subTimer = window.setTimeout(() => this.sub.classList.remove('is-open'), ms)
   }
-  setHud(text: string | null): void {
+  /** 敲車 HUD：文字＋損壞進度條（pct 0–100；達 80% 轉紅閃爍） */
+  setHud(text: string | null, pct?: number): void {
     this.hud.classList.toggle('is-open', !!text)
-    if (text) this.hud.textContent = text
+    if (text) this.hudText.textContent = text
+    if (pct !== undefined) {
+      const v = Math.max(0, Math.min(100, pct))
+      this.hudBar.style.width = `${v}%`
+      this.hud.classList.toggle('is-hot', v >= 50)
+      this.hud.classList.toggle('is-crit', v >= 80)
+    }
+  }
+  /** 重新觸發 CSS 動畫 */
+  private retrigger(e: HTMLElement, cls: string): void {
+    e.classList.remove(cls)
+    void e.offsetWidth
+    e.classList.add(cls)
+  }
+  /** 打擊回饋：畫面邊緣白閃、準星命中標記、HUD 彈跳 */
+  impact(heavy: boolean): void {
+    this.impactEl.classList.toggle('is-heavy', heavy)
+    this.retrigger(this.impactEl, 'is-on')
+    this.marker.classList.toggle('is-heavy', heavy)
+    this.retrigger(this.marker, 'is-on')
+    this.retrigger(this.hud, 'is-bump')
+  }
+  /** 準星旁跳出損壞數字（例：+14%） */
+  popDamage(text: string, heavy: boolean): void {
+    const e = document.createElement('div')
+    e.className = 'spop' + (heavy ? ' is-heavy' : '')
+    e.textContent = text
+    e.style.setProperty('--dx', `${Math.round((Math.random() - 0.5) * 90)}px`)
+    this.host.append(e)
+    const done = () => e.remove()
+    e.addEventListener('animationend', done, { once: true })
+    // 減少動態效果時沒有動畫（不會觸發 animationend），改用計時移除；平常只是保險
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    window.setTimeout(done, reduce ? 1000 : 4000)
+  }
+  /** 損壞里程碑的大字（警報大作、冒煙、起火、全毀） */
+  banner(text: string): void {
+    this.bannerEl.textContent = text
+    this.retrigger(this.bannerEl, 'is-on')
+    clearTimeout(this.bannerTimer)
+    this.bannerTimer = window.setTimeout(() => this.bannerEl.classList.remove('is-on'), 1900)
   }
   setCrosshair(on: boolean): void {
     this.cross.classList.toggle('is-open', on)
