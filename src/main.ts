@@ -12,6 +12,7 @@ import { Minimap } from './ui/minimap'
 import { Ui } from './ui/ui'
 import { StoryUI } from './ui/storyUi'
 import { Story } from './campus/story'
+import { MobileShell } from './ui/mobile'
 
 function boot(): void {
   const canvas = document.querySelector<HTMLCanvasElement>('#game')!
@@ -20,7 +21,10 @@ function boot(): void {
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
   const coarse = matchMedia('(pointer: coarse)').matches
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2))
+  // 解析度上限：手機 1.5 倍；觸控裝置另有自適應降解析度（見主迴圈）
+  const maxRatio = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2)
+  let pixelRatio = maxRatio
+  renderer.setPixelRatio(pixelRatio)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.NeutralToneMapping
   renderer.toneMappingExposure = 1.05
@@ -29,6 +33,8 @@ function boot(): void {
   const labels = new CSS2DRenderer({ element: labelLayer })
 
   const world = new CampusWorld()
+  // 手機 GPU：陰影貼圖減半
+  if (coarse) world.sun.shadow.mapSize.set(1024, 1024)
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 
   let ui: Ui | undefined
@@ -170,6 +176,34 @@ function boot(): void {
   }
   resize()
   window.addEventListener('resize', resize)
+  // 手機：直向建議橫向、橫向提供全螢幕（iPhone 改說明加入主畫面）
+  const mobile = new MobileShell(uiRoot, resize)
+
+  // 觸控裝置自適應解析度：持續掉幀就每次降 0.25 倍（最低 0.75），順暢一陣子再回升
+  let avgFrame = 1 / 60
+  let slowFor = 0
+  let fastFor = 0
+  const adaptResolution = (raw: number) => {
+    if (!coarse || document.hidden || raw > 0.5) return
+    avgFrame += (raw - avgFrame) * 0.05
+    if (avgFrame > 1 / 28) {
+      slowFor += raw
+      fastFor = 0
+    } else if (avgFrame < 1 / 50) {
+      fastFor += raw
+      slowFor = 0
+    } else slowFor = fastFor = 0
+    let next = pixelRatio
+    if (slowFor > 2 && pixelRatio > 0.75) next = Math.max(0.75, pixelRatio - 0.25)
+    else if (fastFor > 6 && pixelRatio < maxRatio) next = Math.min(maxRatio, pixelRatio + 0.25)
+    if (next !== pixelRatio) {
+      pixelRatio = next
+      renderer.setPixelRatio(pixelRatio)
+      resize()
+      slowFor = fastFor = 0
+      avgFrame = 1 / 40
+    }
+  }
 
   const clock = new THREE.Clock()
   let elapsed = 0
@@ -206,7 +240,9 @@ function boot(): void {
   }
 
   const frame = () => {
-    const dt = Math.min(0.05, clock.getDelta())
+    const raw = clock.getDelta()
+    const dt = Math.min(0.05, raw)
+    adaptResolution(raw)
     elapsed += dt
     if (!u.modalOpen) {
       explorer.update(dt)
@@ -254,7 +290,7 @@ function boot(): void {
   requestAnimationFrame(frame)
 
   // 測試用唯讀掛鉤
-  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor, story, renderer, THREE, geo: { onPaved, onOpenGround, insideSolid, isWalkable } }
+  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor, story, renderer, mobile, quality: () => pixelRatio, THREE, geo: { onPaved, onOpenGround, insideSolid, isWalkable } }
   document.body.classList.add('is-ready')
 }
 

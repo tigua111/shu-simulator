@@ -136,7 +136,10 @@ try {
   const reset = await page.evaluate(() => localStorage.getItem('shucampus.buildingEdits.v1'))
   if (reset) fail('reset all did not clear')
   // 手機版面
-  const m = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage()
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  // 直向手機：模擬玩家已按「仍要直向遊玩」（提示本身由 mobile-check 測）
+  await mctx.addInitScript(() => sessionStorage.setItem('shucampus.portraitOk', '1'))
+  const m = await mctx.newPage()
   m.setDefaultTimeout(120_000)
   m.setDefaultNavigationTimeout(180_000)
   await m.goto(url)

@@ -219,6 +219,8 @@ try {
 
   // ── Mobile ──
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 })
+  // 直向手機：模擬玩家已按「仍要直向遊玩」（提示本身由 mobile-check 測）
+  await mobile.addInitScript(() => sessionStorage.setItem('shucampus.portraitOk', '1'))
   const m = await open(mobile, errors)
   await shot(m, '11-mobile-start')
   await m.tap('[data-start="walk"]')

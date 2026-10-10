@@ -1254,3 +1254,495 @@ body:not(.is-running) .stag {
     font-size: 0.95rem;
   }
 }
+
+/* ─── 手機兼容：觸控細節 ─────────────────────────── */
+#ui {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+#ui .modal-card {
+  -webkit-user-select: text;
+  user-select: text;
+}
+button {
+  touch-action: manipulation;
+}
+.start-main,
+.start-side {
+  min-width: 0;
+}
+.keys-touch {
+  display: none;
+}
+body.has-touch .keys-desk {
+  display: none;
+}
+body.has-touch .keys-touch {
+  display: inline;
+}
+@media (max-width: 760px) and (orientation: portrait) {
+  .start {
+    padding: 12px calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
+  }
+  .start-card {
+    max-height: calc(100dvh - 24px - var(--safe-t) - var(--safe-b));
+  }
+  /* 直向觸控：待命搖桿在底部模式列之上 */
+  body.has-touch .touch-stick:not(.is-active) {
+    bottom: calc(128px + var(--safe-b));
+  }
+  /* 直向觸控：地點膠囊不要壓到右上小地圖 */
+  body.has-touch #ui > .caption {
+    width: auto;
+    min-width: 0;
+    max-width: calc(100% - 236px - var(--safe-l) - var(--safe-r));
+    padding: 6px 12px 6px 6px;
+    align-items: center;
+    border-radius: 999px;
+  }
+  body.has-touch #ui > .caption > b {
+    width: 28px;
+    height: 28px;
+    font-size: 0.74rem;
+  }
+  body.has-touch #ui > .caption > div {
+    min-width: 0;
+  }
+  body.has-touch #ui > .caption strong {
+    display: block;
+    font-size: 0.86rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* 直向時建議改橫向 */
+.rotate {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  place-items: center;
+  padding: calc(28px + var(--safe-t)) 28px calc(28px + var(--safe-b));
+  background: linear-gradient(160deg, #7f0d21, #2b2024);
+  color: #fff;
+  text-align: center;
+}
+#ui > .rotate.is-open {
+  display: grid;
+}
+.rotate-card {
+  max-width: 320px;
+}
+.rotate-phone {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 20px;
+  color: #fff;
+  animation: rotate-phone 2.6s ease-in-out infinite;
+}
+.rotate-phone svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+@keyframes rotate-phone {
+  0%,
+  18% {
+    transform: rotate(0deg);
+  }
+  42%,
+  76% {
+    transform: rotate(-90deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.rotate h2 {
+  margin: 0 0 10px;
+  font-size: 1.5rem;
+  letter-spacing: 0.08em;
+}
+.rotate p {
+  margin: 0 0 24px;
+  line-height: 1.8;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.88);
+}
+.rotate .btn {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+/* 橫向後的全螢幕詢問卡 */
+.fsprompt {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  display: none;
+  place-items: center;
+  padding: 16px calc(16px + var(--safe-r)) 16px calc(16px + var(--safe-l));
+  background: rgba(43, 32, 36, 0.5);
+}
+#ui > .fsprompt.is-open {
+  display: grid;
+}
+.fs-card {
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  background: var(--paper);
+  border-radius: 18px;
+  border-top: 6px solid var(--crimson);
+  padding: 16px 22px 16px;
+  box-shadow: var(--shadow);
+  text-align: center;
+  animation: rise 0.35s ease both;
+}
+.fs-icon {
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 6px;
+  color: var(--crimson);
+}
+.fs-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.fs-card h2 {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
+}
+.fs-card p {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+.share-ico {
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.2em;
+  color: #1d6fe0;
+}
+.fs-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ─── 手機橫向（矮螢幕）精簡版面 ─────────────────── */
+@media (orientation: landscape) and (max-height: 520px) {
+  #ui > .brand {
+    top: calc(8px + var(--safe-t));
+    left: calc(8px + var(--safe-l));
+    padding: 4px 10px 4px 4px;
+    gap: 7px;
+    border-radius: 11px;
+  }
+  .brand-logo svg {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+  }
+  .brand strong {
+    font-size: 0.76rem;
+  }
+  .brand em {
+    font-size: 0.58rem;
+    margin-top: 0;
+  }
+  #ui > .modes {
+    top: calc(8px + var(--safe-t));
+    bottom: auto;
+    left: auto;
+    right: calc(70px + var(--safe-r));
+    transform: none;
+    padding: 3px;
+    max-width: calc(100% - 250px - var(--safe-l) - var(--safe-r));
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #ui > .modes::-webkit-scrollbar {
+    display: none;
+  }
+  .modes button {
+    padding: 0.5em 0.62em;
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  .modes .sep {
+    height: 14px;
+    margin: 0 2px;
+  }
+  #ui > .index-toggle {
+    display: block;
+    position: fixed;
+    top: calc(8px + var(--safe-t));
+    right: calc(8px + var(--safe-r));
+    border: 0;
+    background: var(--crimson);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.76rem;
+    padding: 0.62em 0.95em;
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+  }
+  #ui > .index {
+    top: calc(48px + var(--safe-t));
+    left: auto;
+    right: calc(8px + var(--safe-r));
+    width: 232px;
+    max-height: calc(100% - 56px - var(--safe-t) - var(--safe-b));
+    padding: 8px 6px 10px;
+    transform: translateX(calc(100% + 30px));
+    z-index: 5;
+  }
+  body.index-open #ui > .index {
+    transform: none;
+  }
+  body.index-open #ui > .minimap-wrap {
+    visibility: hidden;
+  }
+  .index li button {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+  }
+  #ui > .where {
+    display: none;
+  }
+  #ui > .caption {
+    top: calc(48px + var(--safe-t));
+    bottom: auto;
+    left: calc(8px + var(--safe-l));
+    width: auto;
+    min-width: 0;
+    max-width: min(44%, 360px);
+    transform: translateY(-6px);
+    padding: 4px 12px 4px 4px;
+    gap: 8px;
+    align-items: center;
+    border-radius: 999px;
+  }
+  #ui > .caption.is-open {
+    transform: none;
+  }
+  #ui > .caption > b {
+    width: 26px;
+    height: 26px;
+    font-size: 0.72rem;
+  }
+  #ui > .caption > div {
+    min-width: 0;
+  }
+  #ui > .caption strong {
+    display: block;
+    font-size: 0.84rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #ui > .caption p {
+    display: none;
+  }
+  #ui > .minimap-wrap {
+    width: 172px;
+    top: auto;
+    bottom: calc(8px + var(--safe-b));
+    right: calc(8px + var(--safe-r));
+    padding: 3px;
+    border-radius: 12px;
+  }
+  .minimap {
+    border-radius: 9px;
+  }
+  .minimap-wrap span {
+    display: none;
+  }
+  #ui > .hint {
+    top: auto;
+    bottom: calc(10px + var(--safe-b));
+    width: max-content;
+    max-width: calc(100% - 440px);
+    white-space: normal;
+    text-align: center;
+    font-size: 0.72rem;
+    padding: 5px 12px;
+  }
+  .touch-stick {
+    width: 96px;
+    height: 96px;
+    margin: -48px 0 0 -48px;
+  }
+  .touch-stick:not(.is-active) {
+    left: calc(78px + var(--safe-l)) !important;
+    bottom: calc(66px + var(--safe-b));
+    margin: 0 0 -48px -48px;
+  }
+  .touch-stick i {
+    width: 40px;
+    height: 40px;
+    margin: -20px 0 0 -20px;
+  }
+  #ui > .tourbar {
+    bottom: calc(8px + var(--safe-b));
+    width: min(420px, calc(100% - 420px));
+    min-width: 230px;
+    padding: 5px 8px;
+  }
+  #ui > .toast {
+    top: calc(48px + var(--safe-t));
+    padding: 8px 14px;
+    font-size: 0.84rem;
+  }
+  /* 開始畫面：左右兩欄 */
+  #ui > .start {
+    padding: calc(8px + var(--safe-t)) calc(10px + var(--safe-r)) calc(8px + var(--safe-b)) calc(10px + var(--safe-l));
+  }
+  .start-card {
+    max-width: 780px;
+    max-height: calc(100dvh - 16px - var(--safe-t) - var(--safe-b));
+    padding: 14px 22px 14px;
+    border-top-width: 6px;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 0 24px;
+    align-items: center;
+  }
+  .start-logo svg {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+  .eyebrow {
+    margin: 8px 0 2px;
+    font-size: 0.6rem;
+  }
+  .start h1 {
+    font-size: 1.5rem;
+  }
+  .lede {
+    margin: 8px 0 0;
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+  .disclaimer {
+    margin: 0 0 10px;
+    font-size: 0.76rem;
+  }
+  .start-actions {
+    gap: 8px;
+  }
+  .start-actions .btn {
+    padding: 0.55em 1.05em;
+    font-size: 0.86rem;
+  }
+  .keys-hint {
+    margin: 10px 0 0;
+    font-size: 0.72rem;
+    line-height: 1.6;
+  }
+  /* 說明／來源 */
+  #ui > .modal {
+    padding: calc(8px + var(--safe-t)) calc(10px + var(--safe-r)) calc(8px + var(--safe-b)) calc(10px + var(--safe-l));
+  }
+  .modal-card {
+    width: min(720px, 100%);
+    max-height: calc(100dvh - 16px - var(--safe-t) - var(--safe-b));
+    padding: 14px 20px 14px;
+  }
+  .modal-card h2 {
+    margin-bottom: 8px;
+    font-size: 1.1rem;
+  }
+  .modal-card th,
+  .modal-card td {
+    padding: 5px 6px;
+    line-height: 1.55;
+  }
+  .modal-card table,
+  .modal-card p,
+  .modal-card li {
+    font-size: 0.82rem;
+  }
+  /* 警衛對話：三個選項橫排，少擋畫面 */
+  #ui > .sd {
+    bottom: calc(8px + var(--safe-b));
+    width: min(800px, calc(100% - 24px - var(--safe-l) - var(--safe-r)));
+    padding: 9px 14px 10px;
+  }
+  .sd-text {
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+  .sd-choices {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .sd-choice {
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    gap: 8px;
+    line-height: 1.35;
+  }
+  .sd-choice b {
+    width: 22px;
+    height: 22px;
+    font-size: 0.74rem;
+  }
+  .sdead h2 {
+    margin-bottom: 16px;
+    font-size: 2.1rem;
+  }
+  #ui > .ssub {
+    bottom: calc(96px + var(--safe-b));
+    font-size: 0.9rem;
+    padding: 6px 14px;
+  }
+  #ui > .shud {
+    top: calc(48px + var(--safe-t));
+    font-size: 0.8rem;
+  }
+  #ui > .sact {
+    width: 64px;
+    height: 64px;
+    right: calc(30px + var(--safe-r));
+    bottom: calc(40% + var(--safe-b));
+    font-size: 0.95rem;
+  }
+  /* 編輯列 */
+  #ui > .editbar {
+    bottom: calc(8px + var(--safe-b));
+    width: min(680px, calc(100% - 24px - var(--safe-l) - var(--safe-r)));
+    min-width: 0;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .editbar .btn.small {
+    font-size: 0.74rem;
+    padding: 0.35em 0.7em;
+  }
+  .edit-sel strong {
+    font-size: 13px;
+  }
+  .edit-sel small {
+    font-size: 11px;
+  }
+  body.is-editing #ui > .minimap-wrap,
+  body.is-editing #ui > .hint {
+    display: none;
+  }
+  .fs-card {
+    padding: 12px 20px 12px;
+  }
+}

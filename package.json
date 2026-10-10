@@ -11,6 +11,7 @@
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "story": "node scripts/story-check.mjs",
+    "mobile": "node scripts/mobile-check.mjs",
     "manus:build-source": "tsc --noEmit && vite build && node scripts/check-size.mjs"
   },
   "dependencies": {

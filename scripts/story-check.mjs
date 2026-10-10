@@ -312,6 +312,8 @@ try {
 
   // ── 手機：靠近車子出現動作鈕 ──
   const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 })
+  // 直向手機：模擬玩家已按「仍要直向遊玩」（提示本身由 mobile-check 測）
+  await mctx.addInitScript(() => sessionStorage.setItem('shucampus.portraitOk', '1'))
   const m = await mctx.newPage()
   m.on('pageerror', e => errors.push(String(e)))
   m.on('console', x => x.type() === 'error' && errors.push(x.text()))

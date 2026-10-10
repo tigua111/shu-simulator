@@ -49,17 +49,21 @@ export class Ui {
     root.innerHTML = `
       <section class="start is-open" data-screen="start">
         <div class="start-card">
+          <div class="start-main">
           <div class="start-logo">${LOGO_SVG}</div>
           <p class="eyebrow">SHIH HSIN UNIVERSITY · 3D CAMPUS WALK</p>
           <h1>世新大學・漫遊校園</h1>
           <p class="lede">從木柵路上的粉色石造拱門出發，穿過山洞隧道、言論廣場與舍我樓，經過大禮堂與操場，一路走到新聞傳播學院所在的<strong>傳播大廈 C 棟</strong>。</p>
+          </div>
+          <div class="start-side">
           <p class="disclaimer">概念模型｜非精密測繪或正式路線指引</p>
           <div class="start-actions">
             <button type="button" class="btn primary" data-start="walk">從前校門開始步行</button>
             <button type="button" class="btn" data-start="tour">自動導覽</button>
             <button type="button" class="btn" data-start="overview">俯瞰全校</button>
           </div>
-          <p class="keys-hint"><kbd>W A S D</kbd> 或方向鍵移動・拖曳或點擊畫面後移動滑鼠環顧・<kbd>Shift</kbd> 快走・手機用左下搖桿與右側拖曳</p>
+          <p class="keys-hint"><span class="keys-desk"><kbd>W A S D</kbd> 或方向鍵移動・拖曳或點擊畫面後移動滑鼠環顧・<kbd>Shift</kbd> 快走・手機用左下搖桿與右側拖曳</span><span class="keys-touch">左半邊拖曳＝搖桿移動（推到底快走）・右半邊拖曳＝環顧・靠近可互動處點右側圓鈕・建議橫向並開全螢幕</span></p>
+          </div>
         </div>
       </section>
       <header class="brand">
@@ -72,6 +76,7 @@ export class Ui {
         <button type="button" data-mode="tour">自動導覽</button>
         <button type="button" data-edit-toggle>編輯</button>
         <span class="sep"></span>
+        <button type="button" data-fullscreen hidden>全螢幕</button>
         <button type="button" data-open="help">說明</button>
         <button type="button" data-open="sources">來源</button>
       </nav>
@@ -119,7 +124,8 @@ export class Ui {
           <table>
             <tr><th>移動</th><td><kbd>W A S D</kbd> 或方向鍵；按住 <kbd>Shift</kbd> 快走</td></tr>
             <tr><th>環顧</th><td>點擊畫面鎖定滑鼠後移動，或按住滑鼠拖曳；<kbd>Esc</kbd> 釋放滑鼠</td></tr>
-            <tr><th>手機</th><td>左下拖曳搖桿移動（推到底快走），右側拖曳畫面環顧</td></tr>
+            <tr><th>手機</th><td>建議橫向遊玩。左半邊拖曳＝搖桿移動（推到底快走），右半邊拖曳＝環顧</td></tr>
+            <tr><th>全螢幕</th><td>按右上「全螢幕」（手機會一併鎖定橫向）；iPhone Safari 不支援網頁全螢幕，請按分享 →「加入主畫面」，從主畫面圖示開啟即為全螢幕</td></tr>
             <tr><th>模式</th><td><kbd>1</kbd> 步行・<kbd>2</kbd> 俯瞰・<kbd>3</kbd> 自動導覽・<kbd>R</kbd> 回到前校門</td></tr>
             <tr><th>俯瞰</th><td>拖曳旋轉、右鍵或雙指平移、滾輪或雙指縮放</td></tr>
             <tr><th>編輯</th><td>按「編輯」後按住任一建模物件（校舍、民宅、樹、路燈、校門、舞台…）拖曳移動，<kbd>Q</kbd>／<kbd>E</kbd> 或按鈕旋轉；調整自動保存在本機瀏覽器，「套用並重新整理」讓地形與碰撞跟著更新，「匯出座標」下載所有調整過物件的新座標（含經緯度）</td></tr>
