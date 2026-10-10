@@ -83,6 +83,8 @@ try {
   await page.keyboard.up('KeyW')
   s = await state(page)
   check(s.z < 100, `W walks from the street to the gate arch (z=${s.z.toFixed(1)})`)
+  // 校門警衛盤查由 scripts/story-check.mjs 專門測試；這裡直接視為已出示學生證
+  await page.evaluate(() => window.__campus.story.skipGate())
   // 沿隧道（先垂直校門、再彎向東北）穿過：每隔一小段把視線對準折線前方
   const tunnelState = () =>
     page.evaluate(() => {

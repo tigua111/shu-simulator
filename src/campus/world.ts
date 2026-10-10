@@ -37,6 +37,7 @@ import { LOADED_EDITS, transformPoint, type Edit } from './edits'
 import { MovableRegistry, bindObstacles, type Movable } from './movables'
 import { PLAZA_SURVEY } from './plazaSurvey'
 import { addAuditoriumFacade, addAuditoriumFront, addBackGate, addGuardHouse, addPlazaPaving, addStage, type PlazaCtx } from './audPlaza'
+import { addStatueChain, addStoryProps, type StoryProps } from './storyProps'
 import { distToPolyline, insideSolid, isWalkable, onOpenGround, onPaved, pointInPolygon, resample, routeLength, samplePath, setHillField, type Obstacle } from './geometry'
 import { STYLE_ROOF, arrowTexture, courtTexture, facadeTexture, fieldTexture, signTexture, solarTexture, stoneTexture } from './textures'
 
@@ -687,6 +688,8 @@ export class CampusWorld {
   readonly tunnelPts = TUNNEL.pts
   /** 編輯模式可移動的所有物件 */
   readonly movables = new MovableRegistry()
+  /** 互動劇情的人物與道具（storyProps.ts） */
+  storyProps!: StoryProps
   readonly sun: THREE.DirectionalLight
   private beacon!: THREE.Group
 
@@ -756,6 +759,8 @@ export class CampusWorld {
     this.capture('obj:back-gate', '後校門', '16', 'ground', () => addBackGate(pctx))
     this.capture('obj:guard-house', '後校門警衛室', '', 'ground', () => addGuardHouse(pctx))
     addAuditoriumFront(pctx)
+    // 互動劇情的人物與道具（警衛、投影、演講、電梯、董事會專車）
+    this.storyProps = addStoryProps(pctx)
     this.addFences()
     this.addStreetDressing()
     this.addTrees()
@@ -3123,6 +3128,8 @@ export class CampusWorld {
       slab.position.set(0.8, 1.95, 0.1)
       slab.rotation.z = -0.25
       g.add(b1, b2, body, head, slab)
+      // 腳上拴著鐵鍊（互動劇情）
+      addStatueChain(g)
       g.traverse(o => (o.castShadow = true))
       g.position.set(x, at(x, z), z)
       g.rotation.y = 0.5
@@ -3442,7 +3449,7 @@ export class CampusWorld {
         [13.4, HZ0 + 0.03, 1, board, 2.0, 1.1, 1.0],
         [5.3, HZ1 - 0.03, -1, door, 1.8, 2.4, 0],
         [9.2, HZ1 - 0.03, -1, board, 1.8, 1.1, 1.0],
-        [13.4, HZ1 - 0.03, -1, door, 2.2, 2.6, 0],
+        // 東段原木門處改為電梯（storyProps.ts obj:SE-lift）
       ] as [number, number, number, THREE.Material, number, number, number][]) {
         const p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat)
         p.position.set(x, at(x, z) + y + h / 2, z)

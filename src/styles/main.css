@@ -937,3 +937,320 @@ body.is-dragging #game {
     display: none;
   }
 }
+
+/* ─── 互動劇情（story.ts / storyUi.ts） ─── */
+#ui > .sd,
+#ui > .sflash,
+#ui > .ssub,
+#ui > .shud,
+#ui > .scross,
+#ui > .sact,
+#ui > .sdead {
+  pointer-events: none;
+}
+.sd {
+  position: fixed;
+  left: 50%;
+  bottom: calc(26px + var(--safe-b));
+  width: min(680px, calc(100% - 28px));
+  transform: translate(-50%, 24px);
+  opacity: 0;
+  visibility: hidden;
+  padding: 16px 20px 14px;
+  border-radius: 18px;
+  background: rgba(24, 18, 20, 0.92);
+  color: #fff;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0s linear 0.25s;
+  z-index: 50;
+}
+#ui > .sd.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.sd-name {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: #2f4a73;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.sd-text {
+  font-size: 1.12rem;
+  line-height: 1.7;
+  min-height: 1.7em;
+  font-weight: 600;
+}
+.sd-choices {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.sd-choices:empty {
+  display: none;
+}
+.sd-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07);
+  text-align: left;
+  font-weight: 700;
+  font-size: 1rem;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.sd-choice:hover,
+.sd-choice:focus-visible {
+  background: rgba(214, 51, 108, 0.32);
+  border-color: var(--magenta);
+  outline: none;
+}
+.sd-choice b {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--crimson);
+  font-family: var(--num);
+  font-size: 0.85rem;
+}
+.sd-next {
+  margin-top: 8px;
+  text-align: right;
+  font-size: 0.74rem;
+  opacity: 0.6;
+}
+body.is-story .caption,
+body.is-story .hint {
+  opacity: 0 !important;
+}
+/* 槍口閃光 */
+.sflash {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 250, 230, 0.95), rgba(220, 30, 30, 0.75) 60%, rgba(120, 0, 0, 0.85));
+  opacity: 0;
+  z-index: 55;
+}
+.sflash.is-on {
+  animation: sflash 0.9s ease-out;
+}
+@keyframes sflash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* 死亡畫面：先泛紅暗角，再顯示標題與復活鈕 */
+.sdead {
+  --dying: 0;
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, rgba(120, 0, 0, calc(var(--dying) * 0.25)) 30%, rgba(40, 0, 0, calc(var(--dying) * 0.85)));
+  opacity: 0;
+  visibility: hidden;
+  z-index: 60;
+}
+.sdead.is-dying,
+.sdead.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+#ui > .sdead.is-open {
+  pointer-events: auto;
+  background: radial-gradient(ellipse at center, rgba(90, 0, 0, 0.55) 20%, rgba(10, 0, 0, 0.94));
+  transition: background 0.6s ease;
+}
+.sdead-in {
+  display: none;
+  text-align: center;
+  color: #fff;
+}
+.sdead.is-open .sdead-in {
+  display: block;
+  animation: sdead-in 0.9s ease both;
+}
+.sdead h2 {
+  margin: 0 0 28px;
+  font-size: clamp(2rem, 6vw, 3.6rem);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: #ff3b3b;
+  text-shadow: 0 0 24px rgba(255, 0, 0, 0.55), 0 4px 0 #3a0000;
+}
+.sdead .btn {
+  min-width: 160px;
+  font-size: 1.1rem;
+  padding: 12px 28px;
+}
+@keyframes sdead-in {
+  from {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 字幕 */
+.ssub {
+  position: fixed;
+  left: 50%;
+  bottom: calc(150px + var(--safe-b));
+  transform: translateX(-50%);
+  max-width: calc(100% - 40px);
+  padding: 8px 18px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: 45;
+}
+.ssub b {
+  color: #ffd166;
+  margin-right: 4px;
+}
+.ssub.is-open {
+  opacity: 1;
+}
+/* 敲車時的損壞程度 */
+.shud {
+  position: fixed;
+  left: 50%;
+  top: calc(118px + var(--safe-t));
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(20, 20, 22, 0.82);
+  color: #ffd166;
+  font-weight: 800;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 45;
+}
+.shud.is-open {
+  opacity: 1;
+}
+.scross {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45);
+  display: none;
+  z-index: 45;
+}
+.scross.is-open {
+  display: block;
+}
+/* 手機：靠近可互動物件時的動作鈕 */
+.sact {
+  position: fixed;
+  right: calc(26px + var(--safe-r));
+  bottom: calc(46% + var(--safe-b));
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: rgba(163, 18, 43, 0.9);
+  color: #fff;
+  font-weight: 900;
+  font-size: 1.1rem;
+  box-shadow: var(--shadow);
+  display: none;
+  z-index: 46;
+  touch-action: none;
+}
+#ui > .sact.is-open {
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+}
+/* 場景中的提示標籤（CSS2D） */
+.stag {
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: rgba(20, 20, 22, 0.86);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.stag-roof {
+  background: rgba(163, 18, 43, 0.92);
+  font-size: 17px;
+  letter-spacing: 0.12em;
+  border: 2px solid #ffd166;
+}
+.stag-act {
+  background: rgba(255, 209, 102, 0.95);
+  color: #2b2024;
+}
+.stag-act.is-reply {
+  background: rgba(20, 20, 22, 0.9);
+  color: #fff;
+}
+.stag-bubble {
+  position: relative;
+  background: #fff;
+  color: #b3121f;
+  border-radius: 14px;
+  font-size: 16px;
+}
+.stag-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  margin-left: -8px;
+  border: 8px solid transparent;
+  border-bottom: 0;
+  border-top-color: #fff;
+}
+body:not(.is-running) .stag {
+  visibility: hidden;
+}
+@media (max-width: 720px) {
+  .sd {
+    bottom: calc(12px + var(--safe-b));
+    padding: 12px 14px;
+  }
+  .sd-text {
+    font-size: 1rem;
+  }
+  .ssub {
+    bottom: calc(46% + 90px);
+    font-size: 0.95rem;
+  }
+}

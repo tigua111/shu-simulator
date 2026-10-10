@@ -124,6 +124,7 @@ export class Ui {
             <tr><th>俯瞰</th><td>拖曳旋轉、右鍵或雙指平移、滾輪或雙指縮放</td></tr>
             <tr><th>編輯</th><td>按「編輯」後按住任一建模物件（校舍、民宅、樹、路燈、校門、舞台…）拖曳移動，<kbd>Q</kbd>／<kbd>E</kbd> 或按鈕旋轉；調整自動保存在本機瀏覽器，「套用並重新整理」讓地形與碰撞跟著更新，「匯出座標」下載所有調整過物件的新座標（含經緯度）</td></tr>
             <tr><th>跳轉</th><td>點選左側地標索引，或點擊右下小地圖上的位置</td></tr>
+            <tr><th>互動</th><td>步行走到前校門會被警衛盤查（按 <kbd>1</kbd>／<kbd>2</kbd>／<kbd>3</kbd> 或點選項回答，<kbd>空白鍵</kbd> 跳過台詞）；行政大樓坡頂的黑色轎車旁按左鍵拿錘子、對準車身再按左鍵敲；舍我樓一樓電梯前按 <kbd>F</kbd>。手機改按右側出現的圓形動作鈕</td></tr>
           </table>
           <p class="note">地面上的<span class="swatch route"></span>紅磚色步道與白色箭頭是主動線，粉紅光柱是終點傳播大廈 C 棟入口。</p>
           <button type="button" class="btn primary" data-close>知道了</button>
@@ -136,6 +137,7 @@ export class Ui {
           <p>範圍：前校門（01）經隧道、言論廣場（06）、舍我樓（12・13）、學校廣場（14）、大禮堂（17）與操場（18），到新聞傳播學院所在的傳播大廈 C 棟（19）；周邊建築以簡化量體呈現。</p>
           <ul>${SOURCES.map(s => `<li><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a></li>`).join('')}</ul>
           <p class="note">言論廣場南側（原廣電大樓 B 位置）依 2026-10 空拍呈現為施工中鷹架。照片與影片僅作為造型與配色參考，場景中沒有使用任何照片貼圖；所有建築、材質與招牌皆以程式化幾何繪製。</p>
+          <p class="note">校門警衛、隧道投影、董事會專車、言論廣場演講與電梯等互動情節是虛構的校園玩笑，人物與台詞皆為杜撰，不代表世新大學或任何人的實際言行。</p>
           <button type="button" class="btn primary" data-close>關閉</button>
         </div>
       </section>`

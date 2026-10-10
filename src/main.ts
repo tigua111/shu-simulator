@@ -10,6 +10,8 @@ import { BuildingEditor } from './campus/editor'
 import { LOADED_EDITS, sanitize } from './campus/edits'
 import { Minimap } from './ui/minimap'
 import { Ui } from './ui/ui'
+import { StoryUI } from './ui/storyUi'
+import { Story } from './campus/story'
 
 function boot(): void {
   const canvas = document.querySelector<HTMLCanvasElement>('#game')!
@@ -119,6 +121,8 @@ function boot(): void {
     change: (sel, count) =>
       u.setEditInfo(sel ? { id: sel.id, num: sel.num, name: sel.label, kind: sel.kind, dataLevel: sel.dataLevel, dx: sel.total.dx, dz: sel.total.dz, rotDeg: (sel.total.rot * 180) / Math.PI } : null, count),
   })
+  // 互動劇情（校門警衛、隧道投影、砸車、演講、電梯）
+  const story = new Story(explorer, world.scene, world.storyProps, new StoryUI(uiRoot), canvas, () => !!u.editing)
   const loadedCount = Object.keys(LOADED_EDITS).length
   if (loadedCount) {
     document.querySelectorAll('[data-start]').forEach(b =>
@@ -140,7 +144,7 @@ function boot(): void {
   })
 
   window.addEventListener('keydown', e => {
-    if (!u.started || u.modalOpen) return
+    if (!u.started || u.modalOpen || story.blocking) return
     if ((e.target as HTMLElement)?.closest?.('input, textarea')) return
     if (e.code === 'Digit1') setMode('walk')
     else if (e.code === 'Digit2') setMode('overview')
@@ -204,7 +208,10 @@ function boot(): void {
   const frame = () => {
     const dt = Math.min(0.05, clock.getDelta())
     elapsed += dt
-    if (!u.modalOpen) explorer.update(dt)
+    if (!u.modalOpen) {
+      explorer.update(dt)
+      story.update(dt)
+    }
     world.update(elapsed)
     const mode = explorer.mode
     if (mode === 'overview') world.setShadowFocus(explorer.orbit.target.x, explorer.orbit.target.z, true)
@@ -247,7 +254,7 @@ function boot(): void {
   requestAnimationFrame(frame)
 
   // 測試用唯讀掛鉤
-  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor, renderer, THREE, geo: { onPaved, onOpenGround, insideSolid, isWalkable } }
+  ;(window as unknown as { __campus: unknown }).__campus = { explorer, world, ui: u, editor, story, renderer, THREE, geo: { onPaved, onOpenGround, insideSolid, isWalkable } }
   document.body.classList.add('is-ready')
 }
 

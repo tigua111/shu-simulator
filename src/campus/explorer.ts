@@ -49,6 +49,12 @@ export class Explorer {
   tourPaused = false
   /** 偏好減少動態效果 */
   reducedMotion = false
+  /** 過場／對話中：停用移動與滑鼠環顧，鏡頭由劇情控制 */
+  locked = false
+  /** 劇情鏡頭特效：dy 眼高偏移、roll 側傾、shake 晃動強度 */
+  readonly camFx = { dy: 0, roll: 0, shake: 0 }
+  /** 劇情關卡：過濾每一步移動（例如校門警衛未放行前不得進門） */
+  moveFilter: ((from: Vec2, to: Vec2) => Vec2) | null = null
   private eyeY = groundHeight(START.pos.x, START.pos.z) + EYE
   /** 目前站立高度（樓梯／天橋分層用） */
   private floorY = groundHeight(START.pos.x, START.pos.z)
@@ -102,7 +108,7 @@ export class Explorer {
     window.addEventListener('blur', () => this.keys.clear())
 
     canvas.addEventListener('pointerdown', e => {
-      if (this.mode !== 'walk' || e.pointerType === 'touch') return
+      if (this.mode !== 'walk' || e.pointerType === 'touch' || this.locked) return
       this.dragging = true
       canvas.requestPointerLock?.()?.catch?.(() => undefined)
     })
@@ -111,6 +117,10 @@ export class Explorer {
       if (this.mode !== 'walk') return
       const locked = document.pointerLockElement === canvas
       if (!locked && !this.dragging) return
+      // 指標鎖定剛開始或游標被重新置中時，瀏覽器偶爾送出一次異常大的位移（約半個視窗），
+      // 直接略過，避免視角突然甩向天空
+      const spike = Math.max(window.innerWidth, window.innerHeight) * 0.3
+      if (Math.abs(e.movementX) > spike || Math.abs(e.movementY) > spike) return
       this.addLook(e.movementX * 0.0024, e.movementY * 0.0024)
     })
     this.applyWalkCamera()
@@ -121,6 +131,7 @@ export class Explorer {
   }
 
   addLook(dx: number, dy: number): void {
+    if (this.locked) return
     if (this.mode === 'tour') this.setMode('walk')
     this.yaw -= dx
     this.pitch = Math.max(-1.25, Math.min(1.25, this.pitch - dy))
@@ -176,6 +187,14 @@ export class Explorer {
     this.applyWalkCamera()
   }
 
+  /** 移到 p（保留視角與模式），用於劇情推回 */
+  placeAt(p: Vec2): void {
+    this.pos = { ...p }
+    this.floorY = walkHeight(p.x, p.z, this.floorY)
+    this.vel = { x: 0, z: 0 }
+    this.applyWalkCamera(0.016)
+  }
+
   goToLandmark(l: Landmark): void {
     if (this.mode === 'overview') {
       const y = groundHeight(l.at.x, l.at.z)
@@ -204,13 +223,15 @@ export class Explorer {
   }
 
   private updateWalk(dt: number): void {
-    let mx = this.touchMove.x
-    let my = this.touchMove.y
-    for (const k of this.keys) {
-      const v = MOVE_KEYS[k]
-      if (v) {
-        mx += v[0]
-        my += v[1]
+    let mx = this.locked ? 0 : this.touchMove.x
+    let my = this.locked ? 0 : this.touchMove.y
+    if (!this.locked) {
+      for (const k of this.keys) {
+        const v = MOVE_KEYS[k]
+        if (v) {
+          mx += v[0]
+          my += v[1]
+        }
       }
     }
     const len = Math.hypot(mx, my)
@@ -231,7 +252,8 @@ export class Explorer {
     this.vel.z += (tz - this.vel.z) * k
     if (Math.abs(this.vel.x) + Math.abs(this.vel.z) > 0.001) {
       const to = { x: this.pos.x + this.vel.x * dt, z: this.pos.z + this.vel.z * dt }
-      const next = resolveMove(this.pos, to, 0.9, this.obstacles)
+      let next = resolveMove(this.pos, to, 0.9, this.obstacles)
+      if (this.moveFilter) next = this.moveFilter(this.pos, next)
       this.pos = inStairZone(next.x, next.z) || inStairZone(this.pos.x, this.pos.z) ? this.stepLimit(this.pos, next) : next
     }
     this.applyWalkCamera(dt)
@@ -305,8 +327,11 @@ export class Explorer {
     this.floorY = walkHeight(this.pos.x, this.pos.z, this.floorY)
     const target = this.floorY + EYE
     this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * 10))
-    this.camera.position.set(this.pos.x, this.eyeY, this.pos.z)
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ')
+    this.camera.position.set(this.pos.x, this.eyeY + this.camFx.dy, this.pos.z)
+    const sh = this.reducedMotion ? 0 : this.camFx.shake
+    const jx = sh ? (Math.random() - 0.5) * sh : 0
+    const jy = sh ? (Math.random() - 0.5) * sh : 0
+    this.camera.rotation.set(this.pitch + jx, this.yaw + jy, this.camFx.roll, 'YXZ')
   }
 
   private nearestRouteS(): number {
