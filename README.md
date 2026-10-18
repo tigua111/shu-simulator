@@ -1,59 +1,100 @@
-# game-3d starter (three.js + Rapier)
+# 世新大學・漫遊校園
 
-A complete, small 3D game — **Sky Cores**: run, jump and dash across floating islands to collect
-every energy core before the clock runs out, avoiding patrol drones. It exists to be *changed*:
-the engine layer is fixed scaffolding, the game layer is the part you rewrite.
+在瀏覽器裡以第一人稱漫遊世新大學的 3D 概念校園：從前校門穿過隧道，經言論廣場、舍我樓、學校廣場、大禮堂與操場，走到新聞傳播學院所在的傳播大廈 C 棟。支援電腦鍵盤滑鼠與手機觸控，提供俯瞰、自動導覽、地標跳轉、小地圖、編輯模式（拖曳／旋轉場景中的模型），以及幾段校園玩笑互動情節。
+
+> **概念模型／非精密測繪或正式路線指引。** 建築位置、步道與坡度為依資料與照片判讀的近似值。互動情節（校門警衛、隧道投影、董事會專車、言論廣場演講、電梯等）為虛構玩笑，人物與台詞皆為杜撰，不代表世新大學或任何人的實際言行。
+
+技術：Three.js + TypeScript + Vite，純前端靜態網站，沒有後端或資料庫。
+
+## 在自己的電腦執行
+
+需要 [Node.js](https://nodejs.org/) 22（或 20.19 以上）與 pnpm 10。
 
 ```bash
-pnpm install
-pnpm dev      # http://localhost:5173
-pnpm build    # typecheck + production build + bundle budget
-pnpm test     # unit tests (rules, save, i18n, level)
-pnpm smoke    # after build: headless browser playthrough + screenshots in shots/
+corepack enable          # 啟用 pnpm（Node.js 內建）
+pnpm install             # 安裝套件
+pnpm dev                 # 開發伺服器 http://localhost:3000
+pnpm build               # 型別檢查＋正式建置，輸出到 dist/
+pnpm preview             # 預覽建置結果 http://localhost:4173
 ```
 
-## Layout
+`dist/` 內全部使用相對路徑，可以直接放到任何靜態網站空間（包含 GitHub Pages 的 `/<repo>/` 子路徑）。
 
-| Path | Role | Change it? |
+## 上傳到 GitHub 並用 GitHub Pages 發布
+
+1. 在 GitHub 建立一個新的 repository（免費帳號要用 GitHub Pages，repo 需設為 Public）。
+2. 把這個資料夾裡的**所有檔案**放進 repo，二選一：
+   - **網頁上傳**：在 repo 頁面按「Add file → Upload files」，把資料夾內的所有檔案與子資料夾一起拖進去，再按「Commit changes」。
+     務必包含 `.github` 資料夾與 `.gitignore`；macOS 的 Finder 預設隱藏「.」開頭的檔案，可按 `Command + Shift + .` 顯示。
+   - **指令上傳**（需安裝 Git）：
+     ```bash
+     git init -b main
+     git add .
+     git commit -m "世新大學・漫遊校園"
+     git remote add origin https://github.com/<你的帳號>/<repo 名稱>.git
+     git push -u origin main
+     ```
+3. 到 repo 的「Settings → Pages → Build and deployment → Source」選「**GitHub Actions**」。
+4. 到「Actions」分頁等「Deploy to GitHub Pages」出現綠色勾勾（約 1–2 分鐘；若在步驟 3 之前就已上傳，點進該工作流程按「Run workflow」重跑一次）。
+   完成後網址為 `https://<你的帳號>.github.io/<repo 名稱>/`。
+
+之後每次推送到 `main`，`.github/workflows/deploy.yml` 都會自動重新建置並發布。
+
+> 社群分享預覽圖（og:image）的網址設定在 `scripts/manus-game-sharing/build.mjs` 的 `publicationOrigin`，目前指向原本的 manus.game 網址；若要改成 GitHub Pages 網址，改這一行即可。
+
+## 操作
+
+| 功能 | 電腦 | 手機 |
 | --- | --- | --- |
-| `src/engine/loop.ts` | Fixed 60 Hz simulation + interpolated rendering | Rarely |
-| `src/engine/input.ts` | Keyboard/mouse, gamepad, touch → one action state | Add actions here |
-| `src/engine/physics.ts` | Rapier world, collider helpers, render interpolation | Rarely |
-| `src/engine/renderer.ts` | WebGL renderer, quality presets, bloom | Rarely |
-| `src/engine/audio.ts` | Music/SFX buses, synthesized SFX, `load()` for files | Add sounds |
-| `src/engine/save.ts` | Versioned localStorage save + leaderboard | Add fields + parsing |
-| `src/engine/i18n.ts` | en / zh-CN, browser detection, saved choice wins | Rarely |
-| `src/engine/assets.ts` | Cached GLTF/texture loading with progress | Use it for models |
-| `src/game/config.ts` | **All tuning numbers** | Yes |
-| `src/game/rules.ts` | Pure score/lives/clock/win rules (unit tested) | Yes |
-| `src/game/world.ts` | Level layout, sky, lights, islands, stones, lifts | Yes |
-| `src/game/player.ts` | Character controller + game feel + procedural model | Yes |
-| `src/game/*.ts` | Camera, cores, drones, particles, scene orchestration | Yes |
-| `src/ui/`, `src/styles/main.css` | HTML/CSS title, HUD, pause, settings, results | Yes |
-| `src/i18n/*.json` | All player-facing text (both files, same keys) | Yes |
+| 移動 | WASD／方向鍵，按住 Shift 快走 | 左半邊拖曳＝搖桿（推到底快走） |
+| 環顧 | 點畫面鎖定滑鼠後移動，或按住滑鼠拖曳；Esc 釋放滑鼠 | 右半邊拖曳 |
+| 模式 | 1 步行・2 俯瞰・3 自動導覽・R 回到前校門 | 功能列按鈕；建議橫向並開全螢幕 |
+| 互動 | 警衛盤查按 1／2／3 回答、空白鍵跳過台詞；坡頂黑色轎車旁按左鍵拿錘子再敲；舍我樓電梯前按 F | 右側出現的圓形動作鈕 |
+| 編輯 | 按「編輯」後拖曳任一模型，Q／E 旋轉；調整存在本機瀏覽器，可匯出座標 | 同左 |
 
-## Rules for changes
+## 專案結構
 
-- **Simulation in `step()`, visuals in `render()`/`animate()`.** Gameplay state only changes in
-  fixed steps; read presses there with `input.consume(action)`, never `pressed()`.
-- **Rules stay pure.** Scoring, win/lose and progression go in `rules.ts` with tests; scene code
-  reports events and reads state.
-- **Every visible string is an i18n key** in both `en.json` and `zh-CN.json` (a test enforces
-  matching keys and placeholders). Chinese glyphs come from the subset font in `public/fonts/`;
-  if you add new Chinese text, check it renders (missing glyphs fall back to system fonts).
-- **UI is HTML/CSS**, not canvas. Keep the game look: display font, outlined text, hard offset
-  shadows, skewed buttons, notched panels. Menus must stay keyboard/gamepad navigable
-  (`data-nav` on focusable controls).
-- **Colliders come from the helpers** in `physics.ts` with the same sizes as the meshes.
-- Keep `npm run build` within budget (`scripts/check-size.mjs`) and `npm run smoke` green.
+| 路徑 | 內容 |
+| --- | --- |
+| `src/main.ts` | 進入點：渲染器、主迴圈、模式切換、各模組串接 |
+| `src/campus/data.ts` | 座標系（x 向東、z 向南，單位公尺）、建物、步道、地形高度、路線 |
+| `src/campus/site.ts` | 由 `tools/build_site.py` 產生的場地資料（OpenStreetMap／國土測繪中心資料整理後的結果，勿手改） |
+| `src/campus/world.ts` | 3D 世界建構：地形、校舍、鄰房、樹木、隧道、廣場與各項設施 |
+| `src/campus/audPlaza.ts` | 大禮堂樓梯與平台、學校廣場、八風舞台、後校門與警衛室 |
+| `src/campus/geometry.ts` | 可步行範圍與碰撞判定 |
+| `src/campus/explorer.ts` | 第一人稱移動、環顧、樓梯高度、相機特效 |
+| `src/campus/story.ts`、`storyProps.ts`、`people.ts`、`car.ts`、`sfx.ts` | 互動情節、人物與道具、可破壞的車、合成音效 |
+| `src/campus/editor.ts`、`movables.ts`、`edits.ts` | 編輯模式：拖曳／旋轉模型、儲存（瀏覽器 localStorage）與匯入匯出 |
+| `src/campus/textures.ts`、`appearance.ts` | 程式化立面與材質、各棟外觀設定 |
+| `src/ui/` | 介面：開始畫面、功能列、地標索引、小地圖、說明與來源、手機版面、劇情對話 |
+| `src/styles/main.css` | 全部樣式 |
+| `public/` | 網站圖示與字型（Sora） |
+| `assets/share/` | 分享預覽圖與圖示原檔 |
+| `tests/` | 單元測試（`pnpm test`） |
+| `scripts/` | 建置與瀏覽器自動化檢查（見下方） |
+| `tools/` | 產生場地資料與診斷用的 Python 工具（原始 GIS 資料不在此 repo 內） |
+| `research-notes*.md`、`ideas.md` | 資料來源、照片判讀與實作決策紀錄 |
 
-## Controls
+## 測試
 
-Keyboard/mouse: WASD move, mouse look (click to capture), Space jump (hold = higher), Shift
-sprint, F or left click dash, Esc pause. Gamepad: left stick, right stick, A jump, X/RB dash,
-LB sprint, Start pause. Touch: left-side stick, right-side drag to look, JUMP / DASH buttons.
+```bash
+pnpm test                               # 單元測試
+pnpm exec playwright install chromium   # 第一次跑瀏覽器檢查前需要
+pnpm build && pnpm smoke                # 桌機／手機煙霧測試
+pnpm story                              # 互動情節檢查
+pnpm mobile                             # 手機版面檢查
+node scripts/edit-check.mjs             # 編輯模式檢查
+```
 
-## Credits
+瀏覽器檢查使用軟體繪圖，每項可能需要數分鐘。
 
-Fonts: Sora, Figtree, Noto Sans SC — SIL Open Font License 1.1 (see `public/fonts/*-OFL.txt`).
-Libraries: three.js (MIT), Rapier (Apache-2.0).
+## 參考來源
+
+- 建築輪廓與步道：© OpenStreetMap contributors（ODbL），並以內政部國土測繪中心正射影像核對。
+- [世新大學官方校園導覽地圖](https://www.shu.edu.tw/SHU-Location.aspx)（建築編號與相對位置）、[傳播大廈 C 棟樓層資訊](https://www.shu.edu.tw/SHU-Building-C.aspx)；樓層數依世新官網。
+- 外觀、配色與附屬構造依作者拍攝的校園空拍與地面影片判讀；照片與影片僅作造型參考，場景中沒有使用任何照片貼圖，所有建築、材質與招牌皆以程式繪製。
+
+## 第三方授權
+
+- [three.js](https://threejs.org/)：MIT License
+- Sora 字型：SIL Open Font License 1.1（見 `public/fonts/Sora-OFL.txt`）
