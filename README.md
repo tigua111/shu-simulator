@@ -24,17 +24,11 @@ pnpm preview             # 預覽建置結果 http://localhost:4173
 
 `dist/` 內全部使用相對路徑，可以直接放到任何靜態網站空間（包含 GitHub Pages 的 `/<repo>/` 子路徑）。
 
-## 用 GitHub Pages 發布成網站（選用）
+## GitHub 與 Manus 連動
 
-`.github/workflows/deploy.yml` 會在推送到 `main` 時自動建置並發布到 GitHub Pages。免費帳號的 GitHub Pages 只能用在公開的 repo，所以 **repo 為私人時這個工作流程會自動略過**（顯示為 skipped，不會失敗）。想要 `github.io` 網址時：
+這個 repo 是 Manus 專案「世新大學・漫遊校園」的程式碼庫：在 Manus 上做的修改會存到這裡的 `main`，網站由 Manus 發布到上方的線上網址。
 
-1. 「Settings → General → Danger Zone → Change repository visibility」改為 **Public**。
-2. 「Settings → Pages → Build and deployment → Source」選 **GitHub Actions**。
-3. 到「Actions」分頁點「Deploy to GitHub Pages」→「Run workflow」，出現綠色勾勾後網址為 `https://<帳號>.github.io/<repo 名稱>/`。之後每次推送到 `main` 都會自動更新。
-
-若要自己上傳到另一個 repo：把所有檔案（包含 `.github` 資料夾與 `.gitignore`；macOS Finder 按 `Command + Shift + .` 顯示隱藏檔）拖進 GitHub 的「Add file → Upload files」，或用 `git init -b main && git add . && git commit -m "init" && git remote add origin <repo 網址> && git push -u origin main`。
-
-> 社群分享預覽圖（og:image）的網址設定在 `scripts/manus-game-sharing/build.mjs` 的 `publicationOrigin`，目前指向原本的 manus.game 網址；若要改成 GitHub Pages 網址，改這一行即可。
+> 社群分享預覽圖（og:image）的網址設定在 `scripts/manus-game-sharing/build.mjs` 的 `publicationOrigin`，目前指向原本的 manus.game 網址；若網站改放到其他網址，改這一行即可。
 
 ## 操作
 
