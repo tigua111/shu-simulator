@@ -1,6 +1,8 @@
-# 世新大學・漫遊校園
+# 世新大學模擬器
 
-在瀏覽器裡以第一人稱漫遊世新大學的 3D 概念校園：從前校門穿過隧道，經言論廣場、舍我樓、學校廣場、大禮堂與操場，走到新聞傳播學院所在的傳播大廈 C 棟。支援電腦鍵盤滑鼠與手機觸控，提供俯瞰、自動導覽、地標跳轉、小地圖、編輯模式（拖曳／旋轉場景中的模型），以及幾段校園玩笑互動情節。
+**線上版本：<https://shucampus-ulqxcgfw.manus.game>**（直接用瀏覽器開啟即可遊玩，手機也可以）
+
+「世新大學・漫遊校園」：在瀏覽器裡以第一人稱漫遊世新大學的 3D 概念校園：從前校門穿過隧道，經言論廣場、舍我樓、學校廣場、大禮堂與操場，走到新聞傳播學院所在的傳播大廈 C 棟。支援電腦鍵盤滑鼠與手機觸控，提供俯瞰、自動導覽、地標跳轉、小地圖、編輯模式（拖曳／旋轉場景中的模型），以及幾段校園玩笑互動情節。
 
 > **概念模型／非精密測繪或正式路線指引。** 建築位置、步道與坡度為依資料與照片判讀的近似值。互動情節（校門警衛、隧道投影、董事會專車、言論廣場演講、電梯等）為虛構玩笑，人物與台詞皆為杜撰，不代表世新大學或任何人的實際言行。
 
@@ -18,27 +20,19 @@ pnpm build               # 型別檢查＋正式建置，輸出到 dist/
 pnpm preview             # 預覽建置結果 http://localhost:4173
 ```
 
+> **為什麼直接雙擊 `index.html` 會是空白？** 根目錄的 `index.html` 是原始碼入口，要透過 `pnpm dev` 編譯後才會顯示。建置後的 `dist/index.html` 也一樣：瀏覽器不允許以檔案方式（`file://`）執行網頁模組程式，必須經由網頁伺服器開啟，例如 `pnpm preview`，或放到網站空間。
+
 `dist/` 內全部使用相對路徑，可以直接放到任何靜態網站空間（包含 GitHub Pages 的 `/<repo>/` 子路徑）。
 
-## 上傳到 GitHub 並用 GitHub Pages 發布
+## 用 GitHub Pages 發布成網站（選用）
 
-1. 在 GitHub 建立一個新的 repository（免費帳號要用 GitHub Pages，repo 需設為 Public）。
-2. 把這個資料夾裡的**所有檔案**放進 repo，二選一：
-   - **網頁上傳**：在 repo 頁面按「Add file → Upload files」，把資料夾內的所有檔案與子資料夾一起拖進去，再按「Commit changes」。
-     務必包含 `.github` 資料夾與 `.gitignore`；macOS 的 Finder 預設隱藏「.」開頭的檔案，可按 `Command + Shift + .` 顯示。
-   - **指令上傳**（需安裝 Git）：
-     ```bash
-     git init -b main
-     git add .
-     git commit -m "世新大學・漫遊校園"
-     git remote add origin https://github.com/<你的帳號>/<repo 名稱>.git
-     git push -u origin main
-     ```
-3. 到 repo 的「Settings → Pages → Build and deployment → Source」選「**GitHub Actions**」。
-4. 到「Actions」分頁等「Deploy to GitHub Pages」出現綠色勾勾（約 1–2 分鐘；若在步驟 3 之前就已上傳，點進該工作流程按「Run workflow」重跑一次）。
-   完成後網址為 `https://<你的帳號>.github.io/<repo 名稱>/`。
+`.github/workflows/deploy.yml` 會在推送到 `main` 時自動建置並發布到 GitHub Pages。免費帳號的 GitHub Pages 只能用在公開的 repo，所以 **repo 為私人時這個工作流程會自動略過**（顯示為 skipped，不會失敗）。想要 `github.io` 網址時：
 
-之後每次推送到 `main`，`.github/workflows/deploy.yml` 都會自動重新建置並發布。
+1. 「Settings → General → Danger Zone → Change repository visibility」改為 **Public**。
+2. 「Settings → Pages → Build and deployment → Source」選 **GitHub Actions**。
+3. 到「Actions」分頁點「Deploy to GitHub Pages」→「Run workflow」，出現綠色勾勾後網址為 `https://<帳號>.github.io/<repo 名稱>/`。之後每次推送到 `main` 都會自動更新。
+
+若要自己上傳到另一個 repo：把所有檔案（包含 `.github` 資料夾與 `.gitignore`；macOS Finder 按 `Command + Shift + .` 顯示隱藏檔）拖進 GitHub 的「Add file → Upload files」，或用 `git init -b main && git add . && git commit -m "init" && git remote add origin <repo 網址> && git push -u origin main`。
 
 > 社群分享預覽圖（og:image）的網址設定在 `scripts/manus-game-sharing/build.mjs` 的 `publicationOrigin`，目前指向原本的 manus.game 網址；若要改成 GitHub Pages 網址，改這一行即可。
 

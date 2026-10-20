@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   build:
+    # 免費方案的私人 repo 不能用 GitHub Pages：repo 為私人時略過（skipped），改為公開後才會執行
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
