@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 2,
+  "publicationOrigin": "https://shucampus-ulqxcgfw.manus.game",
+  "title": "世新大學・漫遊校園",
+  "description": "在瀏覽器以第一人稱漫遊世新大學 3D 概念校園：從前校門穿過隧道、舍我樓、大禮堂與操場，走到傳播大廈 C 棟。概念模型，非精密測繪。",
+  "defaultCaptions": {},
+  "assets": {
+    "og": {
+      "digest": "sha256:1573b962b23fed1af6328f9d25c82c21a7b6c018c2edc3d8cfee101a850c9478",
+      "path": "share/1573b962b23fed1af6328f9d25c82c21a7b6c018c2edc3d8cfee101a850c9478.png",
+      "mime": "image/png",
+      "width": 1200,
+      "height": 630,
+      "sizeBytes": 1275564,
+      "sourcePath": "assets/share/og.png"
+    },
+    "favicon": {
+      "digest": "sha256:9ac8d54f565301a6c99a6cf5b9139379919249374509f1b2295b3d1d5f8c30ec",
+      "path": "share/9ac8d54f565301a6c99a6cf5b9139379919249374509f1b2295b3d1d5f8c30ec.png",
+      "mime": "image/png",
+      "width": 512,
+      "height": 512,
+      "sizeBytes": 3354,
+      "sourcePath": "assets/share/favicon.png"
+    }
+  }
+}

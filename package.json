@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/manus-game-sharing/build.mjs",
+    "pages": "pnpm build && rm -rf docs && cp -r dist docs && touch docs/.nojekyll",
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

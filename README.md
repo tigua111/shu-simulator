@@ -1,6 +1,8 @@
 # 世新大學模擬器
 
-**線上版本：<https://shucampus-ulqxcgfw.manus.game>**（直接用瀏覽器開啟即可遊玩，手機也可以）
+**線上版本：<https://tigua111.github.io/shu-simulator/>**（GitHub Pages，需先依下方「免費公開網址」開啟；直接用瀏覽器開啟即可遊玩，手機也可以）
+
+Manus 發布網址：<https://shucampus-ulqxcgfw.manus.game>
 
 「世新大學・漫遊校園」：在瀏覽器裡以第一人稱漫遊世新大學的 3D 概念校園：從前校門穿過隧道，經言論廣場、舍我樓、學校廣場、大禮堂與操場，走到新聞傳播學院所在的傳播大廈 C 棟。支援電腦鍵盤滑鼠與手機觸控，提供俯瞰、自動導覽、地標跳轉、小地圖、編輯模式（拖曳／旋轉場景中的模型），以及幾段校園玩笑互動情節。
 
@@ -24,9 +26,19 @@ pnpm preview             # 預覽建置結果 http://localhost:4173
 
 `dist/` 內全部使用相對路徑，可以直接放到任何靜態網站空間（包含 GitHub Pages 的 `/<repo>/` 子路徑）。
 
+## 免費公開網址（GitHub Pages）
+
+`docs/` 資料夾是建置好的網站（由 `pnpm pages` 產生），GitHub Pages 可以直接提供，不需要 GitHub Actions。第一次開啟：
+
+1. 「Settings → General」拉到最底的「Danger Zone」→「Change repository visibility」→ 改為 **Public**（免費帳號的 GitHub Pages 只能用在公開 repo）。
+2. 「Settings → Pages」→「Build and deployment」的 Source 選 **Deploy from a branch**，Branch 選 **main**、資料夾選 **/docs**，按 Save。
+3. 約 1–3 分鐘後即可開啟 <https://tigua111.github.io/shu-simulator/>。
+
+之後修改程式碼要更新公開網站時，執行 `pnpm pages` 重新產生 `docs/` 並推送到 `main`，GitHub Pages 會自動更新。
+
 ## GitHub 與 Manus 連動
 
-這個 repo 是 Manus 專案「世新大學・漫遊校園」的程式碼庫：在 Manus 上做的修改會存到這裡的 `main`，網站由 Manus 發布到上方的線上網址。
+這個 repo 是 Manus 專案「世新大學・漫遊校園」的程式碼庫：在 Manus 上做的修改會存到這裡的 `main`，網站由 Manus 發布到上方的 Manus 發布網址。
 
 > 社群分享預覽圖（og:image）的網址設定在 `scripts/manus-game-sharing/build.mjs` 的 `publicationOrigin`，目前指向原本的 manus.game 網址；若網站改放到其他網址，改這一行即可。
 
